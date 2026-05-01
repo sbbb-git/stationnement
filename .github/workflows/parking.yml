@@ -11,7 +11,7 @@ jobs:
 
   ticket-75016:
     name: Ticket 75016
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,7 +35,7 @@ jobs:
 
   ticket-75008:
     name: Ticket 75008
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: ticket-75016   # attend que le 75016 soit fini avant de démarrer
     steps:
       - uses: actions/checkout@v4
