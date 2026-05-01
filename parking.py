@@ -50,6 +50,13 @@ def get_access_token():
             "refresh_token": os.environ["PBP_REFRESH_TOKEN"],
             "client_id": "paybyphone_web",
         },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://m.paybyphone.com",
+            "Referer": "https://m.paybyphone.com/",
+            "X-Pbp-Clienttype": "WebApp",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+        },
     )
     log.info("Token status : %s — %s", r.status_code, r.text[:200])
     r.raise_for_status()
