@@ -1,0 +1,59 @@
+name: Ticket stationnement 20h01
+
+on:
+  schedule:
+    # 20h01 heure de Paris (heure d'été = UTC+2, donc 18h01 UTC)
+    # En hiver (octobre → mars), changer 18 en 19
+    - cron: "1 18 * * *"
+  workflow_dispatch: # pour tester à la main depuis GitHub
+
+jobs:
+
+  ticket-75016:
+    name: Ticket 75016
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium --with-deps
+      - name: Acheter le ticket
+        run: python parking.py --zone 75016
+        env:
+          FLOWBIRD_EMAIL:    ${{ secrets.FLOWBIRD_EMAIL }}
+          FLOWBIRD_PASSWORD: ${{ secrets.FLOWBIRD_PASSWORD }}
+      - name: Sauvegarder les screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-75016-${{ github.run_id }}
+          path: screenshots/
+          retention-days: 3
+
+  ticket-75008:
+    name: Ticket 75008
+    runs-on: ubuntu-latest
+    needs: ticket-75016   # attend que le 75016 soit fini avant de démarrer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium --with-deps
+      - name: Acheter le ticket
+        run: python parking.py --zone 75008
+        env:
+          FLOWBIRD_EMAIL:    ${{ secrets.FLOWBIRD_EMAIL }}
+          FLOWBIRD_PASSWORD: ${{ secrets.FLOWBIRD_PASSWORD }}
+      - name: Sauvegarder les screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-75008-${{ github.run_id }}
+          path: screenshots/
+          retention-days: 3
