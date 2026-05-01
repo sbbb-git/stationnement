@@ -35,9 +35,10 @@ ZONES = {
 
 def make_session():
     s = requests.Session()
-    # Le cookie user peut être URL-encodé depuis le navigateur, on le décode
     user_cookie = unquote(os.environ["FLOWBIRD_USER_COOKIE"])
+    phpsessid = os.environ["FLOWBIRD_PHPSESSID"]
     s.cookies.set("user", user_cookie, domain="my.flowbirdapp.com")
+    s.cookies.set("PHPSESSID", phpsessid, domain="my.flowbirdapp.com")
     s.cookies.set("serverflb", "apachen1", domain="my.flowbirdapp.com")
     s.headers.update({
         "X-Mpp-Brand": "flowbird",
@@ -48,9 +49,7 @@ def make_session():
         "Accept-Language": "fr",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     })
-    # Charger la page d'accueil pour que le serveur crée le PHPSESSID
-    r = s.get(BASE)
-    log.info("Session initialisée — cookies : %s", list(s.cookies.keys()))
+    log.info("Session prête avec PHPSESSID=%s…", phpsessid[:8])
     return s
 
 

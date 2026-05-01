@@ -24,6 +24,7 @@ jobs:
         env:
           FLOWBIRD_EMAIL:        ${{ secrets.FLOWBIRD_EMAIL }}
           FLOWBIRD_USER_COOKIE:  ${{ secrets.FLOWBIRD_USER_COOKIE }}
+          FLOWBIRD_PHPSESSID:    ${{ secrets.FLOWBIRD_PHPSESSID }}
           FLOWBIRD_VEHICLE_ID:   ${{ secrets.FLOWBIRD_VEHICLE_ID }}
           FLOWBIRD_PLATE:        ${{ secrets.FLOWBIRD_PLATE }}
 
