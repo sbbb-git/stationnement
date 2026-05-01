@@ -3,7 +3,6 @@ name: Ticket stationnement 20h01
 on:
   schedule:
     # 20h01 heure de Paris (heure d'été = UTC+2, donc 18h01 UTC)
-    # En hiver (octobre → mars), changer 18 en 19
     - cron: "1 18 * * *"
   workflow_dispatch:
 
@@ -22,11 +21,8 @@ jobs:
       - name: Acheter le ticket
         run: python parking.py --zone 75016
         env:
-          FLOWBIRD_EMAIL:        ${{ secrets.FLOWBIRD_EMAIL }}
-          FLOWBIRD_USER_COOKIE:  ${{ secrets.FLOWBIRD_USER_COOKIE }}
-          FLOWBIRD_PHPSESSID:    ${{ secrets.FLOWBIRD_PHPSESSID }}
-          FLOWBIRD_VEHICLE_ID:   ${{ secrets.FLOWBIRD_VEHICLE_ID }}
-          FLOWBIRD_PLATE:        ${{ secrets.FLOWBIRD_PLATE }}
+          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
+          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
 
   ticket-75008:
     name: Ticket 75008
@@ -42,9 +38,5 @@ jobs:
       - name: Acheter le ticket
         run: python parking.py --zone 75008
         env:
-          FLOWBIRD_EMAIL:          ${{ secrets.FLOWBIRD_EMAIL }}
-          FLOWBIRD_USER_COOKIE:    ${{ secrets.FLOWBIRD_USER_COOKIE }}
-          FLOWBIRD_VEHICLE_ID:     ${{ secrets.FLOWBIRD_VEHICLE_ID }}
-          FLOWBIRD_PLATE:          ${{ secrets.FLOWBIRD_PLATE }}
-          FLOWBIRD_POS_75008:      ${{ secrets.FLOWBIRD_POS_75008 }}
-          FLOWBIRD_POSLABEL_75008: ${{ secrets.FLOWBIRD_POSLABEL_75008 }}
+          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
+          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
