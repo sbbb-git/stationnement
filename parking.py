@@ -4,12 +4,12 @@ Usage : python parking.py --zone 75016
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
 import time
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 import requests
 from dotenv import load_dotenv
@@ -35,7 +35,10 @@ ZONES = {
 
 def make_session():
     s = requests.Session()
-    s.cookies.set("user", os.environ["FLOWBIRD_USER_COOKIE"], domain="my.flowbirdapp.com")
+    # Le cookie user peut être URL-encodé depuis le navigateur, on le décode
+    user_cookie = unquote(os.environ["FLOWBIRD_USER_COOKIE"])
+    s.cookies.set("user", user_cookie, domain="my.flowbirdapp.com")
+    s.cookies.set("serverflb", "apachen1", domain="my.flowbirdapp.com")
     s.headers.update({
         "X-Mpp-Brand": "flowbird",
         "Accept": "application/json, text/plain, */*",
@@ -45,8 +48,9 @@ def make_session():
         "Accept-Language": "fr",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     })
-    # Établir la session pour obtenir le PHPSESSID
-    s.get(f"{BASE}/user/get", params={"id": "1", "rt": rt(), "version": VERSION})
+    # Charger la page d'accueil pour que le serveur crée le PHPSESSID
+    r = s.get(BASE)
+    log.info("Session initialisée — cookies : %s", list(s.cookies.keys()))
     return s
 
 
