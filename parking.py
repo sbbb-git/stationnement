@@ -20,7 +20,10 @@ log = logging.getLogger(__name__)
 GRAPHQL_URL = "https://consumer.paybyphoneapis.com/uapi/graphql"
 TOKEN_URL = "https://auth.paybyphoneapis.com/token"
 REPO = "sachabitoun17-ctrl/stationnement"
-HANDI_RATE_POLICY_ID = "1085252721"
+RATE_POLICY = {
+    "75016": "1085252721",
+    "75007": "312941064",
+}
 
 MUTATION = """
 mutation CreateQuotesV1($requests: [QuoteRequestInput!]!) {
@@ -93,7 +96,7 @@ def start_parking(access_token, zone):
                 "details": {
                     "locationId": zone,
                     "advertisedLocationId": zone,
-                    "ratePolicyId": HANDI_RATE_POLICY_ID,
+                    "ratePolicyId": RATE_POLICY[zone],
                     "parkingQuoteOperation": "Start",
                     "durationTimeUnit": "Hours",
                     "durationQuantity": "1",
@@ -141,7 +144,7 @@ def start_parking(access_token, zone):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--zone", required=True, choices=["75016", "75008"])
+    parser.add_argument("--zone", required=True, choices=["75016", "75007"])
     args = parser.parse_args()
 
     try:
