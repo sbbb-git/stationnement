@@ -90,6 +90,7 @@ def create_ticket(s, zone):
         params={"platform": "europe", "rt": rt(), "version": VERSION},
         json=payload,
     )
+    log.info("Réponse serveur : %s — %s", r.status_code, r.text[:500])
     r.raise_for_status()
     data = r.json()
     order_id = data["id"]
