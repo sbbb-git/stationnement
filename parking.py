@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://consumer.paybyphoneapis.com/uapi/graphql"
-TOKEN_URL = "https://consumer.paybyphoneapis.com/identity/connect/token"
+TOKEN_URL = "https://auth.paybyphoneapis.com/token"
 
 HANDI_RATE_POLICY_ID = "1085252721"
 
