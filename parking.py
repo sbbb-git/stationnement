@@ -1,94 +1,130 @@
 """
-Achète un ticket de stationnement Flowbird automatiquement.
+Achète un ticket Flowbird via l'API directement (pas de navigateur).
 Usage : python parking.py --zone 75016
 """
 
 import argparse
-import asyncio
+import json
 import logging
 import os
 import sys
-from datetime import datetime
-from pathlib import Path
+import time
+from datetime import datetime, timezone
 
+import requests
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-FLOWBIRD_URL = "https://my.flowbirdapp.com/#/Parking"
-SCREENSHOTS = Path("screenshots")
+BASE = "https://my.flowbirdapp.com"
+VERSION = "2.42.0+1771"
+
+ZONES = {
+    "75016": {
+        "pos": "http://api.whooshstore.com/tm/whooshstore.com/parkFacility/v1/1966/PoS/v1/36961401/",
+        "posLabel": "77 AVENUE FOCH (16F)",
+    },
+    "75008": {
+        "pos": os.getenv("FLOWBIRD_POS_75008", ""),
+        "posLabel": os.getenv("FLOWBIRD_POSLABEL_75008", ""),
+    },
+}
 
 
-async def screenshot(page, nom):
-    SCREENSHOTS.mkdir(exist_ok=True)
-    path = SCREENSHOTS / f"{datetime.now():%H%M%S}_{nom}.png"
-    await page.screenshot(path=str(path), full_page=True)
-    log.info("📸 Screenshot : %s", path)
+def make_session():
+    s = requests.Session()
+    s.cookies.set("user", os.environ["FLOWBIRD_USER_COOKIE"], domain="my.flowbirdapp.com")
+    s.headers.update({
+        "X-Mpp-Brand": "flowbird",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": "https://my.flowbirdapp.com",
+        "Referer": "https://my.flowbirdapp.com/",
+        "Accept-Language": "fr",
+    })
+    return s
 
 
-async def acheter_ticket(zone: str):
-    email = os.environ["FLOWBIRD_EMAIL"]
-    password = os.environ["FLOWBIRD_PASSWORD"]
-    headless = os.getenv("HEADLESS", "true") == "true"
+def rt():
+    return int(time.time() * 1000)
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
-        page = await browser.new_page(
-            viewport={"width": 1280, "height": 800},
-            locale="fr-FR",
-        )
 
-        try:
-            # 1. Ouvrir Flowbird
-            log.info("Ouverture de Flowbird…")
-            await page.goto(FLOWBIRD_URL, wait_until="networkidle")
-            await screenshot(page, "01_accueil")
+def create_ticket(s, zone):
+    cfg = ZONES[zone]
+    if not cfg["pos"]:
+        raise ValueError(f"Zone {zone} non configurée — ajoute FLOWBIRD_POS_{zone} dans les secrets.")
 
-            # 2. Connexion
-            log.info("Connexion…")
-            await page.fill("input[type='email']", email)
-            await page.fill("input[type='password']", password)
-            await page.click("button[type='submit']")
-            await page.wait_for_load_state("networkidle")
-            await screenshot(page, "02_apres_login")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = {
+        "author": os.environ["FLOWBIRD_EMAIL"],
+        "channel": "web",
+        "class": "hourly",
+        "duration": "PT1M",
+        "freeDuration": "PT0S",
+        "paidDuration": "PT0S",
+        "platform": "europe",
+        "pos": cfg["pos"],
+        "posLabel": cfg["posLabel"],
+        "preferredLanguage": "fr",
+        "space": None,
+        "startTime": now,
+        "usertype": "9",
+        "usertypeLabel": "HANDI",
+        "vehicle": {
+            "id": int(os.environ["FLOWBIRD_VEHICLE_ID"]),
+            "plate": os.environ["FLOWBIRD_PLATE"],
+            "default": True,
+            "category": "pmr",
+            "country-plate": "FR",
+        },
+    }
 
-            # 3. Sélectionner la voiture (la première = ta seule voiture)
-            log.info("Sélection de la voiture…")
-            await page.click(".vehicle-item:first-child, [data-testid='vehicle']:first-child", timeout=8000)
-            await screenshot(page, "03_voiture")
+    log.info("Création du ticket — zone %s…", zone)
+    r = s.post(
+        f"{BASE}/order/create",
+        params={"platform": "europe", "rt": rt(), "version": VERSION},
+        json=payload,
+    )
+    r.raise_for_status()
+    data = r.json()
+    order_id = data["id"]
+    log.info("Ticket créé, id=%s", order_id)
+    return order_id
 
-            # 4. Saisir la zone
-            log.info("Zone : %s", zone)
-            await page.fill("input[placeholder*='zone'], input[name*='zone']", zone)
-            await screenshot(page, "04_zone")
 
-            # 5. Mettre 1 minute
-            log.info("Durée : 1 minute")
-            await page.fill("input[name*='duration'], input[placeholder*='durée']", "1")
-            await screenshot(page, "05_duree")
+def confirm_ticket(s, order_id):
+    log.info("Confirmation du ticket %s…", order_id)
+    r = s.post(
+        f"{BASE}/order/confirm",
+        params={
+            "id": order_id,
+            "platform": "europe",
+            "reminderDelay": "PT5M",
+            "rt": rt(),
+            "version": VERSION,
+        },
+        json={"alertProposals": {}},
+    )
+    r.raise_for_status()
+    log.info("✅ Ticket confirmé !")
+    return r.json()
 
-            # 6. Valider
-            log.info("Validation…")
-            await page.click("button[type='submit'], button:has-text('Confirmer'), button:has-text('Payer')")
-            await page.wait_for_load_state("networkidle")
-            await screenshot(page, "06_confirmation")
 
-            log.info("✅ Ticket acheté — zone %s", zone)
-
-        except Exception as e:
-            await screenshot(page, "ERREUR")
-            log.error("❌ Échec : %s", e)
-            await browser.close()
-            sys.exit(1)
-
-        await browser.close()
+def run(zone):
+    s = make_session()
+    order_id = create_ticket(s, zone)
+    confirm_ticket(s, order_id)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--zone", required=True, help="Ex: 75016 ou 75008")
+    parser.add_argument("--zone", required=True, choices=["75016", "75008"])
     args = parser.parse_args()
-    asyncio.run(acheter_ticket(args.zone))
+
+    try:
+        run(args.zone)
+    except Exception as e:
+        log.error("❌ Échec : %s", e)
+        sys.exit(1)
