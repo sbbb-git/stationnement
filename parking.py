@@ -43,7 +43,10 @@ def make_session():
         "Origin": "https://my.flowbirdapp.com",
         "Referer": "https://my.flowbirdapp.com/",
         "Accept-Language": "fr",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     })
+    # Établir la session pour obtenir le PHPSESSID
+    s.get(f"{BASE}/user/get", params={"id": "1", "rt": rt(), "version": VERSION})
     return s
 
 
