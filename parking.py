@@ -6,6 +6,7 @@ Usage: python parking.py --zone 75016
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import uuid
 
@@ -18,7 +19,7 @@ log = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://consumer.paybyphoneapis.com/uapi/graphql"
 TOKEN_URL = "https://auth.paybyphoneapis.com/token"
-
+REPO = "sachabitoun17-ctrl/stationnement"
 HANDI_RATE_POLICY_ID = "1085252721"
 
 MUTATION = """
@@ -58,9 +59,27 @@ def get_access_token():
             "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
         },
     )
-    log.info("Token status : %s — %s", r.status_code, r.text[:200])
+    log.info("Token status : %s", r.status_code)
     r.raise_for_status()
-    return r.json()["access_token"]
+    data = r.json()
+
+    # Sauvegarder le nouveau refresh token dans GitHub Secrets
+    new_refresh = data.get("refresh_token")
+    if new_refresh and os.getenv("GH_PAT"):
+        try:
+            subprocess.run(
+                ["gh", "secret", "set", "PBP_REFRESH_TOKEN",
+                 "--repo", REPO, "--body", new_refresh],
+                check=True,
+                env={**os.environ, "GH_TOKEN": os.environ["GH_PAT"]},
+                capture_output=True,
+            )
+            log.info("Refresh token mis à jour dans GitHub Secrets ✅")
+        except Exception as e:
+            log.warning("Impossible de mettre à jour le secret : %s", e)
+
+    log.info("Token OK ✅")
+    return data["access_token"]
 
 
 def start_parking(access_token, zone):
@@ -99,6 +118,7 @@ def start_parking(access_token, zone):
             "Accept": "*/*",
             "Origin": "https://m.paybyphone.com",
             "Referer": "https://m.paybyphone.com/",
+            "X-Pbp-Clienttype": "WebApp",
         },
     )
     log.info("GraphQL status : %s", r.status_code)

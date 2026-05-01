@@ -23,6 +23,7 @@ jobs:
         env:
           PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
           PBP_PLATE:         ${{ secrets.PBP_PLATE }}
+          GH_PAT:            ${{ secrets.GH_PAT }}
 
   ticket-75008:
     name: Ticket 75008
@@ -40,3 +41,4 @@ jobs:
         env:
           PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
           PBP_PLATE:         ${{ secrets.PBP_PLATE }}
+          GH_PAT:            ${{ secrets.GH_PAT }}
