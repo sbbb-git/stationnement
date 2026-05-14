@@ -1,139 +1,125 @@
 """
-Achète un ticket HANDI PayByPhone via l'API GraphQL.
+Achète un ticket HANDI PayByPhone via Playwright (vrai navigateur).
 Usage: python parking.py --zone 75016
 """
 
 import argparse
+import asyncio
 import logging
 import os
-import subprocess
 import sys
-import uuid
+from datetime import datetime
+from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-GRAPHQL_URL = "https://consumer.paybyphoneapis.com/uapi/graphql"
-TOKEN_URL = "https://auth.paybyphoneapis.com/token"
-REPO = "sachabitoun17-ctrl/stationnement"
-RATE_POLICY = {
-    "75016": "1085252721",
-    "75007": "312941064",
-}
-
-MUTATION = """
-mutation CreateQuotesV1($requests: [QuoteRequestInput!]!) {
-  createQuotesV1(input: {requests: $requests}) {
-    createQuotesResponse {
-      quotes {
-        quoteId
-        details {
-          locationId
-          parkingStartTime
-          parkingExpiryTime
-          totalCost { amount currency }
-        }
-      }
-      quoteErrors { quoteRequestId status reason }
-    }
-  }
-}
-"""
+SCREENSHOTS = Path("screenshots")
 
 
-def get_access_token():
-    log.info("Connexion avec email/mot de passe…")
-    r = requests.post(
-        TOKEN_URL,
-        data={
-            "grant_type": "password",
-            "username": os.environ["PBP_EMAIL"],
-            "password": os.environ["PBP_PASSWORD"],
-            "client_id": "paybyphone_web",
-            "scope": "paybyphone offline_access",
-        },
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://m.paybyphone.com",
-            "Referer": "https://m.paybyphone.com/",
-            "X-Pbp-Clienttype": "WebApp",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
-        },
-    )
-    log.info("Token status : %s — %s", r.status_code, r.text[:300])
-    r.raise_for_status()
-    return r.json()["access_token"]
+async def shot(page, name):
+    SCREENSHOTS.mkdir(exist_ok=True)
+    path = SCREENSHOTS / f"{datetime.now():%H%M%S}_{name}.png"
+    await page.screenshot(path=str(path), full_page=True)
+    log.info("📸 %s", path.name)
 
 
-def start_parking(access_token, zone):
-    log.info("Démarrage stationnement zone %s…", zone)
-    payload = {
-        "operationName": None,
-        "variables": {
-            "requests": [{
-                "quoteRequestId": str(uuid.uuid4()),
-                "product": "PARKING",
-                "details": {
-                    "locationId": zone,
-                    "advertisedLocationId": zone,
-                    "ratePolicyId": RATE_POLICY[zone],
-                    "parkingQuoteOperation": "Start",
-                    "durationTimeUnit": "Hours",
-                    "durationQuantity": "1",
-                    "licensePlate": os.environ["PBP_PLATE"],
-                    "stall": "",
-                    "parkingSessionId": "",
-                    "paymentAccountId": "",
-                    "paymentCardType": "",
-                    "paymentScope": "Private",
-                },
-            }]
-        },
-        "query": MUTATION,
-    }
+async def buy_ticket(zone: str):
+    username = os.environ["PBP_USERNAME"]
+    password = os.environ["PBP_PASSWORD"]
+    plate    = os.environ["PBP_PLATE"]
 
-    r = requests.post(
-        GRAPHQL_URL,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "Accept": "*/*",
-            "Origin": "https://m.paybyphone.com",
-            "Referer": "https://m.paybyphone.com/",
-            "X-Pbp-Clienttype": "WebApp",
-        },
-    )
-    log.info("GraphQL status : %s", r.status_code)
-    r.raise_for_status()
-    data = r.json()
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=os.getenv("HEADLESS", "true") == "true")
+        ctx = await browser.new_context(
+            locale="fr-FR",
+            viewport={"width": 412, "height": 915},
+            user_agent="Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+        )
+        page = await ctx.new_page()
 
-    response = data.get("data", {}).get("createQuotesV1", {}).get("createQuotesResponse", {})
-    errors = response.get("quoteErrors", [])
-    if errors:
-        raise RuntimeError(f"Erreur PayByPhone : {errors}")
+        try:
+            # 1. Aller sur PayByPhone
+            log.info("Ouverture de PayByPhone…")
+            await page.goto("https://m.paybyphone.com/", wait_until="networkidle", timeout=30000)
+            await shot(page, "01_accueil")
 
-    quotes = response.get("quotes", [])
-    if not quotes:
-        log.error("Réponse complète : %s", data)
-        raise RuntimeError("Aucun ticket dans la réponse.")
+            # 2. Accepter les cookies si bannière
+            try:
+                await page.get_by_role("button", name="Accepter").click(timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
 
-    details = quotes[0]["details"]
-    log.info("✅ Ticket OK — zone %s, expire %s", zone, details.get("parkingExpiryTime"))
+            # 3. Connexion : entrer le numéro de téléphone
+            log.info("Saisie du numéro…")
+            phone_input = page.locator("input[type='tel'], input[name*='phone'], input[id*='phone'], input[name*='username']").first
+            await phone_input.fill(username, timeout=10000)
+            await shot(page, "02_username")
+            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["continuer", "suivant", "next", "connexion"])).first.click()
+
+            # 4. Entrer le mot de passe
+            log.info("Saisie du mot de passe…")
+            pw_input = page.locator("input[type='password']").first
+            await pw_input.fill(password, timeout=10000)
+            await shot(page, "03_password")
+            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["connexion", "sign in", "se connecter", "valider"])).first.click()
+
+            await page.wait_for_load_state("networkidle", timeout=20000)
+            await shot(page, "04_apres_login")
+
+            # 5. Démarrer une session de stationnement
+            log.info("Nouvelle session…")
+            await page.get_by_role("button", name=lambda n: n and "stationner" in n.lower()).first.click(timeout=10000)
+            await shot(page, "05_nouvelle_session")
+
+            # 6. Entrer la zone
+            log.info("Zone %s…", zone)
+            zone_input = page.locator("input[type='search'], input[placeholder*='zone'], input[placeholder*='code']").first
+            await zone_input.fill(zone, timeout=10000)
+            await page.keyboard.press("Enter")
+            await page.wait_for_load_state("networkidle")
+            await shot(page, "06_zone")
+
+            # 7. Sélectionner le premier résultat
+            await page.get_by_text(zone).first.click(timeout=10000)
+            await shot(page, "07_zone_selected")
+
+            # 8. Sélectionner le tarif HANDI
+            log.info("Sélection HANDI…")
+            await page.get_by_text(lambda t: t and "handi" in t.lower()).first.click(timeout=10000)
+            await shot(page, "08_handi")
+
+            # 9. Continuer
+            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["continuer", "suivant", "next"])).first.click()
+            await page.wait_for_load_state("networkidle")
+            await shot(page, "09_summary")
+
+            # 10. Stationner
+            log.info("Confirmation…")
+            await page.get_by_role("button", name=lambda n: n and "stationner" in n.lower()).first.click(timeout=10000)
+            await page.wait_for_load_state("networkidle", timeout=15000)
+            await shot(page, "10_done")
+
+            log.info("✅ Ticket acheté — zone %s", zone)
+
+        except Exception as e:
+            log.error("❌ Échec : %s", e)
+            try:
+                await shot(page, "ERREUR")
+            except Exception:
+                pass
+            await browser.close()
+            sys.exit(1)
+
+        await browser.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--zone", required=True, choices=["75016", "75007"])
     args = parser.parse_args()
-
-    try:
-        token = get_access_token()
-        start_parking(token, args.zone)
-    except Exception as e:
-        log.error("❌ Échec : %s", e)
-        sys.exit(1)
+    asyncio.run(buy_ticket(args.zone))
