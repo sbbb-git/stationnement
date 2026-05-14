@@ -1,5 +1,5 @@
 """
-Achète un ticket HANDI PayByPhone via Playwright (vrai navigateur).
+Achète un ticket HANDI PayByPhone via Playwright.
 Usage: python parking.py --zone 75016
 """
 
@@ -7,12 +7,13 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -28,81 +29,104 @@ async def shot(page, name):
     log.info("📸 %s", path.name)
 
 
+async def accept_cookies(page):
+    """Clique sur le bouton de refus/acceptation des cookies si présent."""
+    for label in ["Tout refuser", "Autoriser tous les cookies", "Accepter", "Refuser tout"]:
+        try:
+            await page.get_by_role("button", name=label).click(timeout=2000)
+            log.info("🍪 Bandeau cookies : %s", label)
+            await page.wait_for_load_state("networkidle", timeout=5000)
+            return
+        except PWTimeout:
+            continue
+
+
 async def buy_ticket(zone: str):
     username = os.environ["PBP_USERNAME"]
     password = os.environ["PBP_PASSWORD"]
-    plate    = os.environ["PBP_PLATE"]
+    plate = os.environ["PBP_PLATE"]
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=os.getenv("HEADLESS", "true") == "true")
         ctx = await browser.new_context(
             locale="fr-FR",
-            viewport={"width": 412, "height": 915},
-            user_agent="Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+            viewport={"width": 1280, "height": 900},
         )
         page = await ctx.new_page()
 
         try:
-            # 1. Aller sur PayByPhone
+            # Étape 1 — Page d'accueil
             log.info("Ouverture de PayByPhone…")
-            await page.goto("https://m.paybyphone.com/", wait_until="networkidle", timeout=30000)
+            await page.goto("https://m.paybyphone.com/", wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_load_state("networkidle", timeout=15000)
             await shot(page, "01_accueil")
 
-            # 2. Accepter les cookies si bannière
+            # Étape 2 — Cookies
+            await accept_cookies(page)
+            await shot(page, "02_post_cookies")
+
+            # Étape 3 — Cliquer sur Se connecter si nécessaire
             try:
-                await page.get_by_role("button", name="Accepter").click(timeout=3000)
-            except PlaywrightTimeoutError:
+                await page.get_by_role("button", name=re.compile(r"connect|sign in|se connecter", re.I)).first.click(timeout=3000)
+            except PWTimeout:
                 pass
 
-            # 3. Connexion : entrer le numéro de téléphone
+            # Étape 4 — Saisir téléphone
             log.info("Saisie du numéro…")
-            phone_input = page.locator("input[type='tel'], input[name*='phone'], input[id*='phone'], input[name*='username']").first
-            await phone_input.fill(username, timeout=10000)
-            await shot(page, "02_username")
-            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["continuer", "suivant", "next", "connexion"])).first.click()
+            phone = page.locator("input[type='tel']").first
+            await phone.wait_for(state="visible", timeout=15000)
+            await phone.fill(username)
+            await shot(page, "03_username")
 
-            # 4. Entrer le mot de passe
+            # Bouton suivant/continuer
+            await page.get_by_role("button", name=re.compile(r"continuer|suivant|next", re.I)).first.click()
+            await page.wait_for_load_state("networkidle", timeout=15000)
+            await shot(page, "04_apres_username")
+
+            # Étape 5 — Mot de passe
             log.info("Saisie du mot de passe…")
             pw_input = page.locator("input[type='password']").first
-            await pw_input.fill(password, timeout=10000)
-            await shot(page, "03_password")
-            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["connexion", "sign in", "se connecter", "valider"])).first.click()
+            await pw_input.wait_for(state="visible", timeout=15000)
+            await pw_input.fill(password)
+            await shot(page, "05_password")
 
+            await page.get_by_role("button", name=re.compile(r"connexion|sign in|se connecter|valider|continuer", re.I)).first.click()
             await page.wait_for_load_state("networkidle", timeout=20000)
-            await shot(page, "04_apres_login")
+            await shot(page, "06_apres_login")
 
-            # 5. Démarrer une session de stationnement
+            # Étape 6 — Nouvelle session
             log.info("Nouvelle session…")
-            await page.get_by_role("button", name=lambda n: n and "stationner" in n.lower()).first.click(timeout=10000)
-            await shot(page, "05_nouvelle_session")
+            await page.get_by_role("button", name=re.compile(r"stationner|nouvelle.*session|park", re.I)).first.click(timeout=10000)
+            await page.wait_for_load_state("networkidle")
+            await shot(page, "07_nouvelle")
 
-            # 6. Entrer la zone
+            # Étape 7 — Zone
             log.info("Zone %s…", zone)
-            zone_input = page.locator("input[type='search'], input[placeholder*='zone'], input[placeholder*='code']").first
-            await zone_input.fill(zone, timeout=10000)
-            await page.keyboard.press("Enter")
+            zone_input = page.locator("input[type='search'], input[type='text']").first
+            await zone_input.fill(zone)
+            await asyncio.sleep(2)
+            await shot(page, "08_zone_saisie")
+
+            # Cliquer sur le résultat
+            await page.get_by_text(re.compile(rf"\b{zone}\b")).first.click(timeout=10000)
             await page.wait_for_load_state("networkidle")
-            await shot(page, "06_zone")
+            await shot(page, "09_zone_choisie")
 
-            # 7. Sélectionner le premier résultat
-            await page.get_by_text(zone).first.click(timeout=10000)
-            await shot(page, "07_zone_selected")
+            # Étape 8 — Tarif HANDI
+            log.info("Tarif HANDI…")
+            await page.get_by_text(re.compile(r"handi|cmi", re.I)).first.click(timeout=10000)
+            await shot(page, "10_handi")
 
-            # 8. Sélectionner le tarif HANDI
-            log.info("Sélection HANDI…")
-            await page.get_by_text(lambda t: t and "handi" in t.lower()).first.click(timeout=10000)
-            await shot(page, "08_handi")
-
-            # 9. Continuer
-            await page.get_by_role("button", name=lambda n: n and any(x in n.lower() for x in ["continuer", "suivant", "next"])).first.click()
+            # Continuer
+            await page.get_by_role("button", name=re.compile(r"continuer|suivant", re.I)).first.click()
             await page.wait_for_load_state("networkidle")
-            await shot(page, "09_summary")
+            await shot(page, "11_recap")
 
-            # 10. Stationner
+            # Étape 9 — Stationner
             log.info("Confirmation…")
-            await page.get_by_role("button", name=lambda n: n and "stationner" in n.lower()).first.click(timeout=10000)
+            await page.get_by_role("button", name=re.compile(r"stationner", re.I)).first.click(timeout=10000)
             await page.wait_for_load_state("networkidle", timeout=15000)
-            await shot(page, "10_done")
+            await shot(page, "12_done")
 
             log.info("✅ Ticket acheté — zone %s", zone)
 
