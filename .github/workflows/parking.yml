@@ -21,9 +21,9 @@ jobs:
       - name: Acheter le ticket
         run: python parking.py --zone 75016
         env:
-          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
-          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
-          GH_PAT:            ${{ secrets.GH_PAT }}
+          PBP_EMAIL:    ${{ secrets.PBP_EMAIL }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+          PBP_PLATE:    ${{ secrets.PBP_PLATE }}
 
   ticket-75007:
     name: Ticket 75007
@@ -39,6 +39,6 @@ jobs:
       - name: Acheter le ticket
         run: python parking.py --zone 75007
         env:
-          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
-          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
-          GH_PAT:            ${{ secrets.GH_PAT }}
+          PBP_EMAIL:    ${{ secrets.PBP_EMAIL }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+          PBP_PLATE:    ${{ secrets.PBP_PLATE }}

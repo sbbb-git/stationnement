@@ -46,13 +46,15 @@ mutation CreateQuotesV1($requests: [QuoteRequestInput!]!) {
 
 
 def get_access_token():
-    log.info("Renouvellement du token…")
+    log.info("Connexion avec email/mot de passe…")
     r = requests.post(
         TOKEN_URL,
         data={
-            "grant_type": "refresh_token",
-            "refresh_token": os.environ["PBP_REFRESH_TOKEN"],
+            "grant_type": "password",
+            "username": os.environ["PBP_EMAIL"],
+            "password": os.environ["PBP_PASSWORD"],
             "client_id": "paybyphone_web",
+            "scope": "paybyphone offline_access",
         },
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
@@ -62,27 +64,9 @@ def get_access_token():
             "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
         },
     )
-    log.info("Token status : %s", r.status_code)
+    log.info("Token status : %s — %s", r.status_code, r.text[:300])
     r.raise_for_status()
-    data = r.json()
-
-    # Sauvegarder le nouveau refresh token dans GitHub Secrets
-    new_refresh = data.get("refresh_token")
-    if new_refresh and os.getenv("GH_PAT"):
-        try:
-            subprocess.run(
-                ["gh", "secret", "set", "PBP_REFRESH_TOKEN",
-                 "--repo", REPO, "--body", new_refresh],
-                check=True,
-                env={**os.environ, "GH_TOKEN": os.environ["GH_PAT"]},
-                capture_output=True,
-            )
-            log.info("Refresh token mis à jour dans GitHub Secrets ✅")
-        except Exception as e:
-            log.warning("Impossible de mettre à jour le secret : %s", e)
-
-    log.info("Token OK ✅")
-    return data["access_token"]
+    return r.json()["access_token"]
 
 
 def start_parking(access_token, zone):
