@@ -1,7 +1,8 @@
 name: Ticket stationnement 20h01
 
 on:
-  # Cron désactivé — uniquement déclenchement manuel
+  schedule:
+    - cron: "1 18 * * 1-6"  # 20h01 Paris (UTC+2 été) — lun-sam
   workflow_dispatch:
 
 jobs:
@@ -16,12 +17,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Acheter le ticket
-        run: python parking.py --zone 75016
+      - name: Acheter le ticket HANDI
+        run: python parking_easypark.py --zone 75016
         env:
-          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
-          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
-          GH_PAT:            ${{ secrets.GH_PAT }}
+          EP_ID_TOKEN:        ${{ secrets.EP_ID_TOKEN }}
+          EP_PARKING_USER_ID: ${{ secrets.EP_PARKING_USER_ID }}
 
   ticket-75007:
     name: Ticket 75007
@@ -34,9 +34,8 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Acheter le ticket
-        run: python parking.py --zone 75007
+      - name: Acheter le ticket HANDI
+        run: python parking_easypark.py --zone 75007
         env:
-          PBP_REFRESH_TOKEN: ${{ secrets.PBP_REFRESH_TOKEN }}
-          PBP_PLATE:         ${{ secrets.PBP_PLATE }}
-          GH_PAT:            ${{ secrets.GH_PAT }}
+          EP_ID_TOKEN:        ${{ secrets.EP_ID_TOKEN }}
+          EP_PARKING_USER_ID: ${{ secrets.EP_PARKING_USER_ID }}
