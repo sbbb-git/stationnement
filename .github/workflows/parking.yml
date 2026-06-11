@@ -1,9 +1,7 @@
 name: Ticket stationnement 20h01
 
 on:
-  schedule:
-    # 20h01 heure de Paris (heure d'été = UTC+2, donc 18h01 UTC)
-    - cron: "1 18 * * *"
+  # Cron désactivé — uniquement déclenchement manuel
   workflow_dispatch:
 
 jobs:
