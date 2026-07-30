@@ -23,7 +23,7 @@ rules:
   - name: 16e — CMI
     plate: AB123CD
     location: "75016"
-    rate: CMI                 # libellé exact donné par `allovalet rates --zone 75016`
+    rate: "1321271030"        # « Handi - toutes zones » — relevé sur le compte
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0    # garde-fou : n'achète que si c'est gratuit
@@ -31,7 +31,7 @@ rules:
   - name: 8e — CMI
     plate: AB123CD
     location: "75008"
-    rate: CMI
+    rate: "1321271030"        # même tarif : il est valable toutes zones
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0

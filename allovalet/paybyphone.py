@@ -86,7 +86,7 @@ SESSION_FIELDS = """
 
 Q_VEHICLES = """
 query GetVehiclesV3($input: GetVehiclesInput!) {
-  getVehiclesV3(input: $input) { id licensePlate countryCode type jurisdiction }
+  getVehiclesV3(input: $input) { licensePlate country type jurisdiction }
 }
 """
 
@@ -524,9 +524,9 @@ class PayByPhoneClient:
         data = self.gql(Q_VEHICLES, {"input": {}}, "getVehiclesV3") or []
         return [
             Vehicle(
-                id=str(v.get("id", "")),
+                id=str(v.get("vehicleId") or v.get("id") or ""),
                 plate=str(v.get("licensePlate", "")).upper().replace(" ", ""),
-                country=v.get("countryCode"),
+                country=v.get("country") or v.get("countryCode"),
                 type=v.get("type"),
                 raw=v,
             )
