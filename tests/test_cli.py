@@ -80,5 +80,4 @@ def test_rates_donne_le_libelle_a_mettre_dans_la_config(env, capsys):
 
 def test_schema_donne_la_forme_attendue(env, capsys):
     assert main(env + ["schema", "--type", "StartParkingSessionV1Input"]) == 0
-    out = capsys.readouterr().out
-    assert "quoteId" in out and "plate" in out
+    assert "request" in capsys.readouterr().out

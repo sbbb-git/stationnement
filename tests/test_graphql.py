@@ -61,10 +61,8 @@ def test_session_non_renouvelable_donne_un_nouveau_ticket(client, server):
     assert len(server.active()) == 2
 
 
-def test_repli_sur_lautre_forme_dentree(client, server):
-    """Si l'API attend `input: {request: {...}}`, le client s'adapte tout seul."""
-    server.require_request_wrapper = True
-
+def test_forme_dachat_relevee_dans_lapplication(client, server):
+    """`input: {request: {quoteId}}` — la forme réellement envoyée par l'app."""
     session = client.start_session(
         location_id="75016", plate=PLATE, duration=Duration(24, "Hours"),
         rate_option_id=CMI_POLICY,
@@ -72,17 +70,18 @@ def test_repli_sur_lautre_forme_dentree(client, server):
     assert session.id
     assert session.expiry > utcnow()
     assert len(server.active()) == 1
+    achat = server.purchases[0]
+    assert set(achat) >= {"quoteId"}  # rien d'autre n'est exigé que le devis
 
 
 def test_introspection_donne_la_vraie_forme(client):
     fields = client.input_fields("StartParkingSessionV1Input")
-    assert [name for name, _ in fields] == ["quoteId", "plate"]
+    assert [name for name, _ in fields] == ["request"]
     assert client.input_fields("TypeInexistantInput") == []
 
 
 def test_erreur_graphql_expose_les_champs_attendus(client, server):
     """Une opération refusée doit dire ce que l'API accepte vraiment."""
-    server.require_request_wrapper = True
     quote = client.quote("75016", PLATE, Duration(1, "Hours"), rate_option_id=CMI_POLICY)
 
     from allovalet.paybyphone import M_START
@@ -93,7 +92,7 @@ def test_erreur_graphql_expose_les_champs_attendus(client, server):
     message = str(exc.value)
     assert "was not provided" in message
     assert "StartParkingSessionV1Input" in message
-    assert "quoteId" in message and "plate" in message
+    assert "request" in message  # le champ réellement attendu
 
 
 def test_zone_inconnue_remonte_le_refus_du_devis(client):
@@ -122,7 +121,7 @@ def test_les_champs_inconnus_sont_elagues(client, server):
     assert [o.type for o in options] == ["CMI", "VIS"]
     # `licensePlate`, `countryCode`, `advertisedLocationId` n'existent pas dans
     # GetRateOptionsInput : ils ne doivent jamais avoir été envoyés.
-    assert client.schema_cache["GetRateOptionsInput"] == ["locationId", "plate"]
+    assert client.schema_cache["GetRateOptionsInput"] == ["locationId", "licensePlate"]
 
 
 def test_input_vide_pour_les_sessions_ouvertes(client, server):

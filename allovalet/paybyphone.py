@@ -534,16 +534,14 @@ class PayByPhoneClient:
     def rate_options(
         self, location_id: str, plate: str | None = None, start: datetime | None = None
     ) -> list[RateOption]:
-        candidats = {
-            "locationId": str(location_id),
-            "advertisedLocationId": str(location_id),
-            "plate": plate,
-            "licensePlate": plate,
-            "countryCode": self.country,
-            "startTime": start.isoformat().replace("+00:00", "Z") if start else None,
-        }
+        # Forme relevée dans l'application : {locationId, licensePlate}.
         payload = self.prune(
-            {k: v for k, v in candidats.items() if v is not None}, "GetRateOptionsInput"
+            {k: v for k, v in {
+                "locationId": str(location_id),
+                "licensePlate": plate,
+                "startTime": start.isoformat().replace("+00:00", "Z") if start else None,
+            }.items() if v is not None},
+            "GetRateOptionsInput",
         )
         data = self.gql(Q_RATE_OPTIONS, {"input": payload}, "getRateOptionsV1") or []
         out = []
@@ -808,13 +806,14 @@ class PayByPhoneClient:
         if not quote.quote_id:
             raise ApiError("Le devis n'a pas renvoyé de quoteId — achat impossible.")
 
-        candidats = {"quoteId": quote.quote_id, "plate": plate, "licensePlate": plate}
+        # Forme relevée dans l'application : input.request ne porte que le
+        # quoteId. Tout le contexte (zone, plaque, durée, tarif) est déjà
+        # attaché au devis côté serveur.
+        requete: dict = {"quoteId": quote.quote_id}
         if session_id:
-            candidats["parkingSessionId"] = session_id
-        base = self.prune(candidats, OPERATION_INPUTS[field]) or {
-            "quoteId": quote.quote_id, "plate": plate,
-        }
-        shapes = [base, {"request": base}, {"quoteId": quote.quote_id}]
+            requete["parkingSessionId"] = session_id
+
+        shapes = [{"request": requete}, requete, {"request": {"quoteId": quote.quote_id}}]
         last: ApiError | None = None
         for shape in shapes:
             try:

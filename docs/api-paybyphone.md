@@ -111,7 +111,25 @@ Relevés ainsi, et donc certains :
 // tickets — en cours comme passés, même opération
 {"input": {"periodType": "CURRENT",  "offset": 0, "limit": 10}}
 {"input": {"periodType": "HISTORIC", "offset": 0, "limit": 50}}
+
+// tarifs d'une zone pour une plaque
+{"input": {"locationId": "75019", "licensePlate": "AB123CD"}}
+
+// ACHAT — le devis porte déjà zone, plaque, durée et tarif
+{"input": {"request": {"quoteId": "c2056a3d-a2f0-4b83-8531-76e646608e7b"}}}
 ```
+
+`StartParkingSessionV1Input` ne contient qu'un champ, `request`, lui-même
+réduit au `quoteId`. Toute forme « à plat » est rejetée.
+
+Après l'achat, l'application enchaîne `createJobV1` puis interroge `getJobV1`
+en boucle : c'est la capture du paiement. Un ticket gratuit n'en a pas besoin —
+`startParkingSessionV1` renvoie déjà `parkingSessionId` et `expireTime`, et la
+vérification passe par `getParkingSessionsV1`.
+
+`getOpenSessionsV1` renvoie bien de l'autopay : ses champs sont `sessionId`,
+`providerSessionRef`, `plate`, `vendorLotId`, `poeQuoteId`… rien à voir avec la
+voirie.
 
 - `periodType` est une énumération **en majuscules** : `CURRENT` / `HISTORIC` ;
 - `getLocationsV1` prend `$input: GetLocationInput!` — type au **singulier** —

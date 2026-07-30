@@ -45,9 +45,9 @@ UNIT_MINUTES = {"minutes": 1, "hours": 60, "days": 1440}
 # Formes d'entrée du serveur. Tout champ hors de cette liste est rejeté, comme
 # le ferait un vrai GraphQL : c'est ce qui vérifie que le client élague.
 INPUT_FIELDS = {
-    "StartParkingSessionV1Input": ["quoteId", "plate"],
-    "RenewParkingSessionV1Input": ["quoteId", "plate", "parkingSessionId"],
-    "GetRateOptionsInput": ["locationId", "plate"],
+    "StartParkingSessionV1Input": ["request"],
+    "RenewParkingSessionV1Input": ["request"],
+    "GetRateOptionsInput": ["locationId", "licensePlate"],
     "GetVehiclesInput": [],
     "GetPaymentAccountsInput": [],
     "GetParkingSessionsInput": ["periodType", "offset", "limit"],
@@ -77,7 +77,7 @@ class FakePayByPhone:
         self.operations: list[str] = []
         self.swallow_purchases = False   # « acheté » mais aucune session créée
         self.reject_duplicate = False    # zone refusant une 2e session
-        self.require_request_wrapper = False  # variante input: {request: {...}}
+        self.accept_flat_input = False  # le vrai n'accepte que input: {request: {...}}
         self.token_calls: list[dict] = []
         self.issued_tokens: set[str] = set()  # un jeton inconnu = 401, comme en vrai
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(self))
@@ -337,7 +337,7 @@ def _make_handler(state: FakePayByPhone):
 
         def _quote_of(self, variables):
             payload = variables.get("input") or {}
-            if state.require_request_wrapper and "request" not in payload:
+            if "request" not in payload and not state.accept_flat_input:
                 return None, None
             if "request" in payload:  # forme alternative
                 payload = payload["request"]
