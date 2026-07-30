@@ -1,14 +1,18 @@
-# Ma configuration. Modifiable à chaud : GitHub Actions relit ce fichier
-# à chaque passage, aucun redéploiement n'est nécessaire.
+# Ce que ça fait : un ticket CMI dans le 16e et dans le 8e, tous les jours,
+# dès 20h01 (heure de Paris). Chaque ticket dure 24 h, donc le suivant reprend
+# le lendemain à 20h01. C'est tout.
 #
-# Avant la première mise en route :
-#   Onglet Actions → « Stationnement automatique » → Run workflow, case Simuler
-#   → le log dit exactement ce qu'il ferait, sans rien acheter.
+# Pour vérifier sans rien acheter :
+#   Actions → « Stationnement 20h01 » → Run workflow, case Simuler.
 
-provider: paybyphone          # bascule sur `easypark` si le compte est chez eux
+provider: paybyphone
 timezone: Europe/Paris
 country: FR
-renew_margin_minutes: 45      # on renouvelle 45 min avant la fin du ticket
+
+# Si le ticket en cours a moins de 45 min devant lui, on en reprend un.
+# Effet utile : si un soir le passage part en retard (20h20), le lendemain à
+# 20h01 l'horaire revient tout seul à l'heure voulue.
+renew_margin_minutes: 45
 
 notify:
   ntfy_topic: ${NTFY_TOPIC}   # facultatif — push gratuit via l'app ntfy
@@ -19,23 +23,23 @@ rules:
   - name: 16e — CMI 24 h
     plate: AB123CD
     location: "75016"
-    rate: CMI                 # vérifie le code exact avec `allovalet rates --zone 75016`
+    rate: CMI                 # le libellé exact sort de l'essai à blanc
     mode: renew
     duration: 24h
-    window:                   # large exprès : la règle n'agit que si le ticket
-      days: [lun-sam]         # en cours arrive à expiration (marge de 45 min),
-      from: "17:00"           # donc une fenêtre large évite tout trou de couverture
+    window:
+      days: [all]             # tous les jours, dimanche compris
+      from: "20:01"
       to: "23:59"
     max_cost_per_ticket: 0    # garde-fou : n'achète que si c'est gratuit
 
-  - name: 7e — CMI 24 h
+  - name: 8e — CMI 24 h
     plate: AB123CD
-    location: "75007"
+    location: "75008"
     rate: CMI
     mode: renew
     duration: 24h
-    window:                   # large exprès : la règle n'agit que si le ticket
-      days: [lun-sam]         # en cours arrive à expiration (marge de 45 min),
-      from: "17:00"           # donc une fenêtre large évite tout trou de couverture
+    window:
+      days: [all]
+      from: "20:01"
       to: "23:59"
     max_cost_per_ticket: 0

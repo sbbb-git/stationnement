@@ -1,9 +1,8 @@
 # AlloValet perso
 
-Stationnement automatique pour **mes propres véhicules**, sur le modèle de
-[allovalet.com](https://allovalet.com/) : le compte de stationnement est piloté
-par des règles, les tickets se renouvellent tout seuls, et les longues durées
-sont découpées pour payer moins cher.
+Un ticket **CMI** dans le **75016** et le **75008**, **tous les jours à 20h01**,
+tout seul. Chaque ticket dure 24 h, donc le suivant reprend le lendemain à
+20h01. Rien à faire au quotidien.
 
 ## Mise en route — 3 étapes
 
@@ -21,18 +20,43 @@ Repo → *Settings* → *Secrets and variables* → *Actions* → *New repositor
 | `PBP_PASSWORD` | ton mot de passe PayByPhone |
 
 **3. Un essai à blanc, puis c'est fini.**
-Onglet *Actions* → *Stationnement automatique* → *Run workflow*, coche
-**Simuler**. Le log dit ce qu'il ferait sans rien acheter :
+Onglet *Actions* → *Stationnement 20h01* → *Run workflow*, coche **Simuler**.
+Le log dit ce qu'il ferait sans rien acheter :
 
 - `🧪 [16e — CMI 24 h] achèterait : zone 75016 · CMI · 1 Days · 0.00 €` → c'est bon,
   décoche Simuler et relance une fois pour prendre le premier vrai ticket.
 - `⛔ Tarif « CMI » indisponible … Tarifs proposés : …` → le libellé exact de ton
   tarif est dans le message. Corrige `rate:` dans `config.yml`, commite, relance.
 
-Ensuite ça tourne tout seul toutes les 30 minutes, y compris si un passage
-échoue : le suivant rattrape.
+Ensuite c'est fini. Le premier ticket part le soir même à 20h01.
 
 ---
+
+## L'horaire, concrètement
+
+Le cron GitHub est en UTC et ignore l'heure d'été, donc le workflow se réveille
+toutes les 15 min entre 18h01 et 21h46 UTC. Ça tombe sur **20h01 à Paris été
+comme hiver**, et les passages suivants ne font rien si le ticket du jour est
+déjà pris.
+
+Deux conséquences utiles :
+
+- GitHub décale souvent un déclenchement de plusieurs minutes, et saute parfois
+  un passage : le suivant rattrape dans le quart d'heure.
+- Si un soir le ticket part à 20h20, le lendemain à 20h01 il reste moins de
+  45 min au ticket en cours, donc il est repris — l'horaire revient tout seul.
+
+Ces deux points sont verrouillés par des tests (`tests/test_ma_config.py`) :
+zones, jours, heure et couverture du cron été/hiver.
+
+---
+
+## Au-delà du strict nécessaire
+
+Le moteur sait aussi faire du découpage tarifaire (SmartPark) et il y a un
+tableau de bord local (`allovalet web`). **Tu n'as rien à en faire** : ce n'est
+pas activé, ça ne tourne pas, et `config.yml` ne contient que les deux règles
+ci-dessus. Dis-le moi si tu veux que je supprime carrément ces morceaux.
 
 | AlloValet | Ici |
 |---|---|

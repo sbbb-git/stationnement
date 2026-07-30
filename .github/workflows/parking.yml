@@ -1,12 +1,13 @@
-name: Stationnement automatique
+name: Stationnement 20h01
 
 on:
+  # Le cron GitHub est en UTC et n'a pas d'heure d'été : on couvre les deux
+  # décalages de Paris (UTC+2 l'été, UTC+1 l'hiver), et on repasse toutes les
+  # 15 min jusqu'à ~23h — GitHub décale souvent le déclenchement de plusieurs
+  # minutes, et le script ne fait rien si le ticket du jour est déjà pris.
+  #   18h01 UTC = 20h01 Paris l'été      19h01 UTC = 20h01 Paris l'hiver
   schedule:
-    # Toutes les 30 min. Le script décide lui-même s'il y a quelque chose à faire,
-    # donc un passage raté est simplement rattrapé au suivant.
-    # (Le cron GitHub est en UTC, mais ça n'a aucune importance ici : les créneaux
-    #  sont évalués en heure de Paris par le script.)
-    - cron: "*/30 * * * *"
+    - cron: "1,16,31,46 18-21 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -32,22 +33,9 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # Conserve le cache des barèmes et le suivi des dépenses entre deux passages.
-      - name: Restaurer l'état
-        uses: actions/cache@v4
-        with:
-          path: .allovalet_state.json
-          key: allovalet-state-${{ github.run_id }}
-          restore-keys: allovalet-state-
-
-      - name: Appliquer les règles
-        run: |
-          python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Prendre les tickets 75016 et 75008
+        run: python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
-          PBP_USERNAME:       ${{ secrets.PBP_USERNAME }}
-          PBP_PASSWORD:       ${{ secrets.PBP_PASSWORD }}
-          EP_ID_TOKEN:        ${{ secrets.EP_ID_TOKEN }}
-          EP_PARKING_USER_ID: ${{ secrets.EP_PARKING_USER_ID }}
-          NTFY_TOPIC:         ${{ secrets.NTFY_TOPIC }}
-          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+          NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}

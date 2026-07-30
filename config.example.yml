@@ -33,20 +33,20 @@ rules:
     mode: renew
     duration: 24h
     window:
-      days: [lun-sam]
-      from: "17:00"
+      days: [all]
+      from: "20:01"
       to: "23:59"
     max_cost_per_ticket: 0    # refuse d'acheter si ce n'est pas gratuit
 
-  - name: 7e — CMI 24 h
+  - name: 8e — CMI 24 h
     plate: AB123CD
-    location: "75007"
+    location: "75008"
     rate: CMI
     mode: renew
     duration: 24h
     window:
-      days: [lun-sam]
-      from: "17:00"
+      days: [all]
+      from: "20:01"
       to: "23:59"
     max_cost_per_ticket: 0
 
