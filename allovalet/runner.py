@@ -127,7 +127,11 @@ class Runner:
 
     def _apply(self, rule: Rule) -> RuleResult:
         now_local = datetime.now(self.tz)
-        active = self.client.find_active(rule.plate, rule.location, self.sessions())
+        # Un tarif « toutes zones » se couvre globalement : un ticket pris dans
+        # le 17e vaut pour le 16e. Chercher par zone ferait croire à un trou et
+        # relancerait un achat inutile à chaque passage.
+        zone_recherchee = None if rule.toutes_zones else rule.location
+        active = self.client.find_active(rule.plate, zone_recherchee, self.sessions())
 
         if not rule.window.contains(now_local):
             if active:
@@ -233,6 +237,7 @@ class Runner:
             rate_option_id=rate.id,
             stall=rule.stall,
             payment_account_id=payment,
+            verify_location=not rule.toutes_zones,
         )
         self._sessions = None  # l'état a changé
         if cost:

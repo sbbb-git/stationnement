@@ -521,7 +521,12 @@ class PayByPhoneClient:
     # ------------------------------------------------------------- véhicules
 
     def vehicles(self) -> list[Vehicle]:
-        data = self.gql(Q_VEHICLES, {"input": {}}, "getVehiclesV3") or []
+        try:
+            data = self.gql(Q_VEHICLES, {"input": {}}, "getVehiclesV3") or []
+        except ApiError as exc:
+            # Non bloquant : cette liste ne sert qu'au diagnostic.
+            log.debug("Véhicules non listés : %s", exc)
+            return []
         return [
             Vehicle(
                 id=str(v.get("vehicleId") or v.get("id") or ""),
@@ -755,6 +760,7 @@ class PayByPhoneClient:
         payment_account_id: str | None = None,
         start_time: datetime | None = None,
         verify: bool = True,
+        verify_location: bool = True,
     ) -> ParkingSession:
         """Prend un ticket : devis → achat → vérification.
 
@@ -781,7 +787,10 @@ class PayByPhoneClient:
         result = self._mutate_session(M_START, "startParkingSessionV1", quote, plate)
         if not verify:
             return result
-        return self._verify(plate, str(location_id), {s.id for s in before}, result)
+        return self._verify(
+            plate, str(location_id) if verify_location else "",
+            {s.id for s in before}, result,
+        )
 
     def renew_session(
         self,

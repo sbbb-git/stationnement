@@ -43,6 +43,7 @@ class Rule:
     window: Window = field(default_factory=Window)
     enabled: bool = True
     stall: str | None = None
+    toutes_zones: bool = False
     max_cost_per_ticket: float | None = None
     renew_margin_minutes: int | None = None
 
@@ -68,6 +69,7 @@ class Rule:
             window=Window.parse(data.get("window")),
             enabled=bool(data.get("enabled", True)),
             stall=str(data["stall"]) if data.get("stall") else None,
+            toutes_zones=bool(data.get("toutes_zones", False)),
             max_cost_per_ticket=(
                 None if data.get("max_cost_per_ticket") is None
                 else float(data["max_cost_per_ticket"])

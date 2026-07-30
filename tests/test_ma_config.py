@@ -23,11 +23,16 @@ def ma_config() -> Config:
     return Config.load(ROOT / "config.yml")
 
 
-def test_les_deux_zones_demandees():
+def test_une_seule_regle_couvrant_tout_paris():
+    """Le tarif « Handi - toutes zones » vaut partout : deux règles feraient
+    croire à deux couvertures distinctes et relanceraient des achats inutiles."""
     rules = ma_config().rules
-    assert [r.location for r in rules] == ["75016", "75008"]
-    assert {r.plate for r in rules} == {"AB123CD"}
-    assert all(r.enabled for r in rules)
+    assert len(rules) == 1
+    regle = rules[0]
+    assert regle.plate == "AB123CD"
+    assert regle.rate == "1321271030"  # relevé sur le compte
+    assert regle.toutes_zones is True
+    assert regle.enabled
 
 
 def test_ticket_de_24h_et_gratuit_seulement():
