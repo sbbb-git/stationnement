@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from .errors import ConfigError
-from .schedule import Window, parse_duration
+from .schedule import Window, parse_duration, parse_time
 
 ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
 
@@ -42,6 +42,7 @@ class Rule:
     max_cost_per_ticket: float | None = None
     max_cost_per_day: float | None = None
     renew_margin_minutes: int | None = None
+    renew_at: str | None = None
     min_chunk_minutes: int = 15
     max_chunk_minutes: int | None = None
 
@@ -76,6 +77,9 @@ class Rule:
             max_cost_per_day=_opt_float(data.get("max_cost_per_day")),
             renew_margin_minutes=(
                 int(data["renew_margin_minutes"]) if data.get("renew_margin_minutes") else None
+            ),
+            renew_at=(
+                parse_time(data["renew_at"]).strftime("%H:%M") if data.get("renew_at") else None
             ),
             min_chunk_minutes=int(data.get("min_chunk_minutes", 15)),
             max_chunk_minutes=(

@@ -1,8 +1,10 @@
 # AlloValet perso
 
-Un ticket **CMI** dans le **75016** et le **75008**, **tous les jours à 20h01**,
-tout seul. Chaque ticket dure 24 h, donc le suivant reprend le lendemain à
-20h01. Rien à faire au quotidien.
+**Il y a toujours un ticket CMI en cours** dans le **75016** et le **75008**.
+C'est la garantie, pas juste un rendez-vous : le renouvellement se fait à
+**20h01**, et si un trou apparaît malgré tout — passage raté, panne, ticket
+arrêté à la main — un ticket est repris dans les 30 minutes, à n'importe quelle
+heure du jour ou de la nuit.
 
 ## Mise en route — 3 étapes
 
@@ -32,22 +34,34 @@ Ensuite c'est fini. Le premier ticket part le soir même à 20h01.
 
 ---
 
-## L'horaire, concrètement
+## Comment la couverture est garantie
 
-Le cron GitHub est en UTC et ignore l'heure d'été, donc le workflow se réveille
-toutes les 15 min entre 18h01 et 21h46 UTC. Ça tombe sur **20h01 à Paris été
-comme hiver**, et les passages suivants ne font rien si le ticket du jour est
-déjà pris.
+À chaque passage, le programme se pose une seule question par zone : **faut-il
+un ticket ?** Trois cas, du plus impératif au plus confortable :
 
-Deux conséquences utiles :
+| Situation | Décision |
+|---|---|
+| Aucun ticket en cours | on en prend un **immédiatement**, quelle que soit l'heure |
+| Le ticket expire dans moins de 25 min | on le reprend **avant** le trou |
+| Il est 20h01 passé et le ticket ne tient pas jusqu'à demain 20h01 | rendez-vous quotidien : on le reprend |
+| Sinon | on ne fait rien |
 
-- GitHub décale souvent un déclenchement de plusieurs minutes, et saute parfois
-  un passage : le suivant rattrape dans le quart d'heure.
-- Si un soir le ticket part à 20h20, le lendemain à 20h01 il reste moins de
-  45 min au ticket en cours, donc il est repris — l'horaire revient tout seul.
+Le rendez-vous n'a lieu **qu'une fois par soir** — sinon chaque passage de la
+soirée déclencherait un renouvellement.
 
-Ces deux points sont verrouillés par des tests (`tests/test_ma_config.py`) :
-zones, jours, heure et couverture du cron été/hiver.
+Le workflow tourne **toutes les 30 min, 24 h/24**, avec un passage toutes les
+10 min autour de 20h01. Comme il se réveille à chaque `HH:01`, il tombe sur
+20h01 heure de Paris **été comme hiver** sans avoir à gérer le changement
+d'heure. Un trou de couverture dure donc au pire une trentaine de minutes, le
+temps du passage suivant.
+
+Ça fait ~56 passages par jour, soit environ **1 000 minutes d'Actions par
+mois** — dans les 2 000 gratuites d'un dépôt privé.
+
+Tout ça est verrouillé par des tests sur les fichiers réellement livrés
+(`tests/test_ma_config.py`, `tests/test_couverture.py`) : les deux zones,
+la veille 24 h/24, le rendez-vous de 20h01, l'écart maximal entre deux
+passages, et la présence de 20h01 dans les deux fuseaux.
 
 ---
 
@@ -317,12 +331,12 @@ pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
 
-80 tests, sans réseau : un faux serveur **GraphQL** rejoue le moteur réel
+93 tests, sans réseau : un faux serveur **GraphQL** rejoue le moteur réel
 (connexion, jeton périmé, tarifs, devis, achat via quoteId, renouvellement,
 prolongation, vérification, achat fantôme, introspection), les commandes, les
-routes du tableau de bord, l'horaire réellement configuré, plus les tests
-unitaires du découpage SmartPark — dont une vérification de l'optimum par
-force brute.
+routes du tableau de bord, la garantie de couverture (nuit, trou, rendez-vous
+non rejoué), l'horaire réellement configuré, plus les tests unitaires du
+découpage SmartPark — dont une vérification de l'optimum par force brute.
 
 Le rendu du tableau de bord est vérifié au navigateur (Chromium) en thème
 clair et sombre : `docs/dashboard.png` et `docs/dashboard-dark.png`.

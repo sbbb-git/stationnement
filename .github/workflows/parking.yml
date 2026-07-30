@@ -1,13 +1,16 @@
-name: Stationnement 20h01
+name: Stationnement
 
 on:
-  # Le cron GitHub est en UTC et n'a pas d'heure d'été : on couvre les deux
-  # décalages de Paris (UTC+2 l'été, UTC+1 l'hiver), et on repasse toutes les
-  # 15 min jusqu'à ~23h — GitHub décale souvent le déclenchement de plusieurs
-  # minutes, et le script ne fait rien si le ticket du jour est déjà pris.
-  #   18h01 UTC = 20h01 Paris l'été      19h01 UTC = 20h01 Paris l'hiver
   schedule:
-    - cron: "1,16,31,46 18-21 * * *"
+    # Toutes les 30 min, 24 h/24 : c'est ce qui garantit qu'un trou de
+    # couverture est rattrapé, quelle que soit l'heure où il apparaît.
+    # Les passages à HH:01 tombent pile sur le rendez-vous de 20h01 (heure de
+    # Paris) été comme hiver, sans avoir à gérer le changement d'heure.
+    - cron: "1,31 * * * *"
+    # Renfort à l'heure du rendez-vous : un passage toutes les 10 min pendant
+    # les deux heures qui l'encadrent (18h-19h UTC couvre 20h-21h Paris l'été
+    # comme l'hiver). GitHub décale ou saute parfois un déclenchement.
+    - cron: "11,21,41,51 18-19 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -33,7 +36,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Prendre les tickets 75016 et 75008
+      # Mémorise le rendez-vous déjà honoré d'un passage à l'autre. Sans ce
+      # cache tout fonctionne quand même : la couverture reste garantie, il y a
+      # simplement un renouvellement de plus certains soirs.
+      - name: Restaurer l'état
+        uses: actions/cache@v4
+        with:
+          path: .allovalet_state.json
+          key: allovalet-state-${{ github.run_id }}
+          restore-keys: allovalet-state-
+
+      - name: Vérifier la couverture 75016 et 75008
         run: python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}

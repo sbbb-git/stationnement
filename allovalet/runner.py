@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import Config, Rule
@@ -148,7 +148,8 @@ class Runner:
                 )
             return RuleResult(rule.name, SKIPPED, f"hors créneau ({rule.window.describe()})")
 
-        if active and active.covers(utcnow(), margin):
+        reason = self._why_act(rule, active, now_local, margin)
+        if not reason:
             return RuleResult(
                 rule.name, OK,
                 f"couvert jusqu'à {self._local(active.expiry)} "
@@ -157,10 +158,58 @@ class Runner:
             )
 
         minutes, plan_note, plan, window_end = self._target_minutes(rule, now_local)
+        plan_note = f"{reason}{' · ' + plan_note if plan_note else ''}"
         if minutes <= 0:
             return RuleResult(rule.name, SKIPPED, "rien à couvrir sur ce créneau")
 
         return self._buy(rule, minutes, plan_note, active, plan, window_end)
+
+    def _why_act(
+        self,
+        rule: Rule,
+        active: ParkingSession | None,
+        now_local: datetime,
+        margin: timedelta,
+    ) -> str | None:
+        """Faut-il prendre ou reprendre un ticket, et pourquoi ? `None` = rien à faire.
+
+        L'invariant est « un ticket doit toujours être en cours ». Trois cas,
+        du plus impératif au plus confortable :
+
+        1. plus rien d'actif        → on prend immédiatement, quelle que soit l'heure
+        2. le ticket va expirer     → on reprend avant le trou
+        3. rendez-vous quotidien    → à `renew_at`, si le ticket ne tient pas
+                                      jusqu'au rendez-vous du lendemain
+        """
+        if active is None:
+            return "aucun ticket en cours"
+
+        # Une seule source de temps : celle passée en paramètre. Sans ça, la
+        # décision dépendrait à la fois de `now_local` et de l'horloge réelle.
+        now_utc = now_local.astimezone(timezone.utc)
+        if not active.covers(now_utc, margin):
+            restant = (active.expiry - now_utc) if active.expiry else timedelta(0)
+            return f"expire dans {_fmt_delta(max(timedelta(0), restant))}"
+
+        if not rule.renew_at or not active.expiry:
+            return None
+
+        hour, minute = (int(x) for x in rule.renew_at.split(":"))
+        anchor_today = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now_local < anchor_today:
+            return None  # le rendez-vous du jour n'est pas encore arrivé
+
+        next_anchor = anchor_today + timedelta(days=1)
+        if active.expiry.astimezone(self.tz) >= next_anchor:
+            return None  # le ticket tient déjà jusqu'au prochain rendez-vous
+
+        # Une seule reprise par rendez-vous, sinon on recommencerait à chaque passage.
+        key = f"{rule.name}@{anchor_today.isoformat()}"
+        if self.dry_run:  # une simulation ne doit pas consommer le rendez-vous
+            return None if self.state.done(key) else f"rendez-vous de {rule.renew_at}"
+        if not self.state.once(key):
+            return None
+        return f"rendez-vous de {rule.renew_at}"
 
     def _target_minutes(self, rule: Rule, now_local: datetime):
         """→ (durée du prochain ticket, commentaire, plan SmartPark, fin du créneau)"""

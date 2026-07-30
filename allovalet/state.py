@@ -90,6 +90,28 @@ class State:
         self.data["disabled"] = sorted(paused)
         self.save()
 
+    # ------------------------------------------------- actions à faire une fois
+
+    def done(self, key: str) -> bool:
+        """Lecture seule : l'action a-t-elle déjà été faite ?"""
+        return key in self.data.get("once", {})
+
+    def once(self, key: str) -> bool:
+        """Vrai la première fois seulement — empêche de refaire la même action.
+
+        Sert au rendez-vous quotidien : sans ça, un ticket qui reste largement
+        valide déclencherait un renouvellement à chaque passage du soir.
+        """
+        marks = self.data.setdefault("once", {})
+        if key in marks:
+            return False
+        marks[key] = datetime.now().isoformat(timespec="seconds")
+        if len(marks) > 200:
+            for old, _ in sorted(marks.items(), key=lambda kv: kv[1])[:100]:
+                marks.pop(old, None)
+        self.save()
+        return True
+
     # -------------------------------------------------------------- SmartPark
 
     def credit_savings(self, key: str, rule: str, amount: float, detail: str) -> bool:

@@ -1,18 +1,20 @@
-# Ce que ça fait : un ticket CMI dans le 16e et dans le 8e, tous les jours,
-# dès 20h01 (heure de Paris). Chaque ticket dure 24 h, donc le suivant reprend
-# le lendemain à 20h01. C'est tout.
+# Objectif : qu'il y ait **toujours** un ticket CMI en cours dans le 16e et
+# dans le 8e. Le renouvellement se fait au rendez-vous de 20h01 (heure de
+# Paris), et si jamais un trou apparaît — passage raté, panne, ticket arrêté à
+# la main — le programme reprend un ticket immédiatement, à n'importe quelle
+# heure du jour ou de la nuit.
 #
 # Pour vérifier sans rien acheter :
-#   Actions → « Stationnement 20h01 » → Run workflow, case Simuler.
+#   Actions → « Stationnement » → Run workflow, case Simuler.
 
 provider: paybyphone
 timezone: Europe/Paris
 country: FR
 
-# Si le ticket en cours a moins de 45 min devant lui, on en reprend un.
-# Effet utile : si un soir le passage part en retard (20h20), le lendemain à
-# 20h01 l'horaire revient tout seul à l'heure voulue.
-renew_margin_minutes: 45
+# Filet de sécurité : on reprend un ticket dès qu'il lui reste moins que ça.
+# Réglé sous l'intervalle entre deux passages (30 min) pour que le rendez-vous
+# de 20h01 reste le moment normal du renouvellement.
+renew_margin_minutes: 25
 
 notify:
   ntfy_topic: ${NTFY_TOPIC}   # facultatif — push gratuit via l'app ntfy
@@ -26,10 +28,8 @@ rules:
     rate: CMI                 # le libellé exact sort de l'essai à blanc
     mode: renew
     duration: 24h
-    window:
-      days: [all]             # tous les jours, dimanche compris
-      from: "20:01"
-      to: "23:59"
+    renew_at: "20:01"         # rendez-vous quotidien
+    # pas de `window` : la règle veille 24 h/24, il doit toujours y avoir un ticket
     max_cost_per_ticket: 0    # garde-fou : n'achète que si c'est gratuit
 
   - name: 8e — CMI 24 h
@@ -38,8 +38,5 @@ rules:
     rate: CMI
     mode: renew
     duration: 24h
-    window:
-      days: [all]
-      from: "20:01"
-      to: "23:59"
+    renew_at: "20:01"
     max_cost_per_ticket: 0
