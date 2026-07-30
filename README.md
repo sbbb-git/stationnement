@@ -1,113 +1,57 @@
-# AlloValet perso
+# Stationnement automatique
 
-**Il y a toujours un ticket CMI en cours** dans le **75016** et le **75008**.
-C'est la garantie, pas juste un rendez-vous : le renouvellement se fait à
-**20h01**, et si un trou apparaît malgré tout — passage raté, panne, ticket
-arrêté à la main — un ticket est repris dans les 30 minutes, à n'importe quelle
-heure du jour ou de la nuit.
+Un ticket **CMI toujours en cours** dans le **75016** et le **75008**, pour la
+plaque AB123CD. Renouvellement au rendez-vous de **20h01**, et rattrapage
+automatique si un trou apparaît.
 
-## Mise en route — 3 étapes
-
-**1. Fusionner cette branche dans `main`.**
-GitHub ne déclenche les tâches planifiées **que depuis la branche par défaut**.
-Tant que le code reste sur `claude/allovalet-personal-inspiration-5fnet9`, le
-cron ne partira jamais.
-
-**2. Ajouter 2 secrets.**
-Repo → *Settings* → *Secrets and variables* → *Actions* → *New repository secret* :
-
-| Nom | Valeur |
-|---|---|
-| `PBP_USERNAME` | ton numéro PayByPhone avec l'indicatif (`+336…`) ou ton email |
-| `PBP_PASSWORD` | ton mot de passe PayByPhone |
-
-**3. Un essai à blanc, puis c'est fini.**
-Onglet *Actions* → *Stationnement 20h01* → *Run workflow*, coche **Simuler**.
-Le log dit ce qu'il ferait sans rien acheter :
-
-- `🧪 [16e — CMI 24 h] achèterait : zone 75016 · CMI · 1 Days · 0.00 €` → c'est bon,
-  décoche Simuler et relance une fois pour prendre le premier vrai ticket.
-- `⛔ Tarif « CMI » indisponible … Tarifs proposés : …` → le libellé exact de ton
-  tarif est dans le message. Corrige `rate:` dans `config.yml`, commite, relance.
-
-Ensuite c'est fini. Le premier ticket part le soir même à 20h01.
+Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
+strictement personnel.
 
 ---
 
-## Comment la couverture est garantie
+## Ce que fait AlloValet, et ce qui est repris ici
 
-À chaque passage, le programme se pose une seule question par zone : **faut-il
-un ticket ?** Trois cas, du plus impératif au plus confortable :
+Leur application (`app.allovalet.com`) est un front Next.js devant un backend
+Python. Deux variables d'environnement de leur code disent l'essentiel :
+`PBP_ENCRYPTION_KEY` et `FASTAPI_INTERNAL_URL`. Autrement dit : **ils stockent
+les identifiants PayByPhone de l'utilisateur, chiffrés, et un service se
+connecte à son compte pour piloter l'API.** Pas d'OAuth, pas d'API partenaire.
 
-| Situation | Décision |
-|---|---|
-| Aucun ticket en cours | on en prend un **immédiatement**, quelle que soit l'heure |
-| Le ticket expire dans moins de 25 min | on le reprend **avant** le trou |
-| Il est 20h01 passé et le ticket ne tient pas jusqu'à demain 20h01 | rendez-vous quotidien : on le reprend |
-| Sinon | on ne fait rien |
-
-Le rendez-vous n'a lieu **qu'une fois par soir** — sinon chaque passage de la
-soirée déclencherait un renouvellement.
-
-Le workflow tourne **toutes les 30 min, 24 h/24**, avec un passage toutes les
-10 min autour de 20h01. Comme il se réveille à chaque `HH:01`, il tombe sur
-20h01 heure de Paris **été comme hiver** sans avoir à gérer le changement
-d'heure. Un trou de couverture dure donc au pire une trentaine de minutes, le
-temps du passage suivant.
-
-Ça fait ~56 passages par jour, soit environ **1 000 minutes d'Actions par
-mois** — dans les 2 000 gratuites d'un dépôt privé.
-
-Tout ça est verrouillé par des tests sur les fichiers réellement livrés
-(`tests/test_ma_config.py`, `tests/test_couverture.py`) : les deux zones,
-la veille 24 h/24, le rendez-vous de 20h01, l'écart maximal entre deux
-passages, et la présence de 20h01 dans les deux fuseaux.
-
----
-
-## Au-delà du strict nécessaire
-
-Le moteur sait aussi faire du découpage tarifaire (SmartPark) et il y a un
-tableau de bord local (`allovalet web`). **Tu n'as rien à en faire** : ce n'est
-pas activé, ça ne tourne pas, et `config.yml` ne contient que les deux règles
-ci-dessus. Dis-le moi si tu veux que je supprime carrément ces morceaux.
+Leur promesse, mot pour mot : « vous définissez vos règles une fois — jours,
+horaires, véhicules — et AlloValet renouvelle vos tickets récurrents **avant
+qu'ils n'expirent** », pour les tarifs « Résident, Visiteur, **CMI**, 2RM,
+Pro ».
 
 | AlloValet | Ici |
 |---|---|
-| Connexion au compte PayByPhone | idem (EasyPark aussi, en secondaire) |
-| Règles par véhicule / zone / code tarif (CMI, résident, visiteur, pro, 2RM) | idem, en YAML |
-| Renouvellement 24 h/24 | passage toutes les 30 min via GitHub Actions |
-| SmartPark™ (découpe pour casser le barème progressif) | `mode: smartpark`, calculé sur les **vrais** prix de l'API |
-| Tableau de bord | `allovalet web`, en local sur ta machine |
-| Justificatifs | `allovalet history` (les reçus officiels restent sur le compte) |
+| Identifiants PayByPhone stockés chiffrés | secrets GitHub Actions |
+| Backend qui tourne en continu | GitHub Actions, toutes les 30 min |
+| Règles véhicule / zone / type de ticket | `config.yml` |
+| Renouvellement avant expiration | idem, avec rattrapage si trou |
+| SmartPark, tableau de bord, multi-véhicules | non repris — inutile ici |
 | 6,35 €/véhicule/mois | 0 € |
-
-![Tableau de bord](docs/dashboard.png)
 
 ---
 
-## Pourquoi ça ne marchait pas
+## Pourquoi les versions précédentes ne marchaient pas
 
-Deux causes, trouvées en sondant les endpoints et en lisant le bundle de
-l'application PayByPhone (une app Flutter : `main.dart.js` contient en clair
-les opérations GraphQL). Détail dans [docs/api-paybyphone.md](docs/api-paybyphone.md).
-
-**1. L'API REST n'existe plus.**
+Ce n'était pas un problème de réglage. En sondant les endpoints :
 
 ```
-GET consumer.paybyphoneapis.com/parking/accounts   →  404 page not found
-POST consumer.paybyphoneapis.com/uapi/graphql      →  401  (vivante)
-POST auth.paybyphoneapis.com/token                 →  400 invalid_grant (vivante)
+GET  consumer.paybyphoneapis.com/parking/accounts   →  404 page not found
+POST consumer.paybyphoneapis.com/uapi/graphql       →  401  (vivante)
+POST auth.paybyphoneapis.com/token                  →  400 invalid_grant (vivante)
 ```
 
-Tout passe par **GraphQL**. Une implémentation basée sur la doc REST
-reverse-engineerée de 2015 ne pouvait pas marcher, quels que soient les
-identifiants.
+**L'API REST utilisée jusque-là n'existe plus.** Elle venait d'une
+documentation reverse-engineerée de 2015. Aucune version bâtie dessus ne
+pouvait aboutir, quels que soient les identifiants.
 
-**2. Il manquait la mutation d'achat.**
+Et il manquait la mutation d'achat : l'ancien script s'arrêtait à
+`createQuotesV1` en affichant `✅ Ticket OK`, alors qu'un devis n'achète rien.
 
-L'ancien script s'arrêtait à `createQuotesV1` et affichait `✅ Ticket OK`. Or un
-devis n'achète rien. Le vrai enchaînement, celui de l'application :
+Le vrai enchaînement, relevé dans le bundle Flutter de l'application
+PayByPhone — méthode et détails dans [docs/api-paybyphone.md](docs/api-paybyphone.md) :
 
 ```
 createQuotesV1         →  un devis, et surtout un quoteId
@@ -115,248 +59,111 @@ startParkingSessionV1  →  l'achat, à partir de ce quoteId
 getOpenSessionsV1      →  vérification que le ticket existe vraiment
 ```
 
-C'est maintenant ce que fait le programme, et un ticket n'est déclaré pris que
-lorsqu'il a été **relu depuis le serveur**. Sinon c'est une erreur, et une
-notification part. (Test de non-régression : `test_achat_fantome_remonte_en_echec`.)
+Un ticket n'est déclaré pris que lorsqu'il a été **relu depuis le serveur**.
 
-**Le renouvellement, en bonus.** Chaque session renvoyée par l'API porte
-`isRenewable` et `renewableAfter` : elle dit elle-même quand elle peut être
-reprise. Quand une session en cours est renouvelable, on passe par
-`renewParkingSessionV1` au lieu d'en empiler une seconde — c'est le mécanisme
-prévu, et il évite le refus « session déjà active ».
+---
+
+## Comment la couverture est garantie
+
+À chaque passage, une seule question par zone : **faut-il un ticket ?**
+
+| Situation | Décision |
+|---|---|
+| Aucun ticket en cours | on en prend un **immédiatement**, quelle que soit l'heure |
+| Le ticket expire dans moins de 25 min | on le reprend **avant** le trou |
+| Il est 20h01 passé et le ticket ne tient pas jusqu'à demain 20h01 | rendez-vous quotidien |
+| Sinon | rien |
+
+Le rendez-vous n'a lieu qu'une fois par soir. Quand une session en cours est
+renouvelable — l'API le dit elle-même avec `isRenewable` — on la renouvelle au
+lieu d'en empiler une seconde.
+
+Le workflow tourne toutes les 30 min, 24 h/24, avec un passage toutes les
+10 min autour de 20h01. Comme il se réveille à chaque `HH:01`, il tombe sur
+20h01 heure de Paris été comme hiver, sans logique de changement d'heure. Un
+trou dure donc au pire une trentaine de minutes. Environ 1 000 minutes
+d'Actions par mois, sur les 2 000 gratuites d'un dépôt privé.
 
 ---
 
 ## Mise en route
 
-### 1. Les identifiants
+**1. Fusionner cette branche dans `main`.** GitHub ne déclenche les tâches
+planifiées que depuis la branche par défaut.
 
-Repo GitHub → **Settings → Secrets and variables → Actions → New repository secret** :
+**2. Deux secrets** — *Settings → Secrets and variables → Actions* :
 
-| Secret | Valeur |
+| Nom | Valeur |
 |---|---|
-| `PBP_USERNAME` | numéro de téléphone (`+336…`) ou email du compte PayByPhone |
+| `PBP_USERNAME` | numéro PayByPhone avec indicatif (`+336…`) ou email |
 | `PBP_PASSWORD` | mot de passe PayByPhone |
-| `NTFY_TOPIC` | *(facultatif)* un mot secret pour recevoir les notifications push |
 
-> Pas de token à renouveler à la main : la connexion se fait par identifiant/mot
-> de passe à chaque passage. C'est ce qui rendait les versions précédentes
-> fragiles (le refresh token tournait et expirait).
-
-### 2. Vérifier avant d'activer
-
-En local :
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # et remplir
-python -m allovalet init      # génère config.yml depuis ton compte (facultatif)
-python -m allovalet doctor    # n'achète rien
-```
-
-`init` lit les véhicules du compte, propose les tarifs réellement disponibles
-sur chaque zone que tu indiques, et écrit `config.yml` tout seul.
-
-`doctor` contrôle, règle par règle : connexion, compte, véhicules, moyen de
-paiement, zone joignable, tarif trouvé, prix du ticket, créneau. Il affiche les
-**vrais codes tarifaires** de tes zones — corrige `rate:` dans `config.yml` si
-`CMI` ne correspond pas au libellé exact.
-
-```bash
-python -m allovalet rates --zone 75016   # liste les tarifs disponibles
-python -m allovalet run --dry-run        # dit ce qu'il ferait, sans acheter
-```
-
-### 3. Activer
-
-Le workflow `.github/workflows/parking.yml` tourne **toutes les 30 minutes**.
-Onglet **Actions** → *Stationnement automatique* → *Run workflow* pour un essai
-manuel immédiat (case « Simuler » disponible).
+**3. Un essai à blanc** — *Actions → Stationnement → Run workflow*, case
+**Simuler**. Le log dit ce qu'il ferait sans rien acheter.
 
 ---
 
 ## Les commandes
 
 ```bash
-python -m allovalet web                           # tableau de bord (voir plus bas)
-python -m allovalet run [--dry-run] [--loop 15]   # applique les règles
-python -m allovalet status                        # tickets en cours + état des règles
-python -m allovalet doctor                        # diagnostic complet
-python -m allovalet init                          # génère config.yml depuis le compte
-python -m allovalet vehicles                      # véhicules du compte
-python -m allovalet zones 75016                   # retrouve l'id d'une zone
-python -m allovalet rates --zone 75016            # tarifs d'une zone
-python -m allovalet quote --zone 75016 --duration 2h
-python -m allovalet plan  --zone 75008 --until 19:00   # simulation SmartPark
-python -m allovalet park  --zone 75016 --duration 24h  # ticket manuel
-python -m allovalet history                       # tickets passés et dépense
-python -m allovalet schema                        # forme exacte attendue par l'API
-python -m allovalet easypark-login                # auth EasyPark par SMS
+python -m allovalet doctor                 # diagnostic complet, rien acheté
+python -m allovalet run [--dry-run]        # un passage
+python -m allovalet status                 # tickets en cours et état des règles
+python -m allovalet rates --zone 75016     # libellés de tarifs de la zone
+python -m allovalet park --zone 75016 --duration 24h   # ticket manuel
+python -m allovalet schema                 # forme exacte attendue par l'API
 ```
 
-`--loop 15` fait tourner la boucle en local toutes les 15 min — pratique pour
-une journée précise sans dépendre de GitHub.
-
----
-
-## Le tableau de bord
-
-```bash
-python -m allovalet web        # http://127.0.0.1:8777
-```
-
-C'est l'équivalent de leur interface, en local :
-
-- tickets en cours avec le temps restant,
-- état de chaque règle (couvert / à prendre / en attente / en pause),
-- **mise en pause d'une règle en un clic**, sans toucher à `config.yml`
-  (l'état est stocké à part, la config reste intacte),
-- lancement d'un passage, en réel ou en simulation,
-- ticket manuel et simulation de découpage,
-- total économisé par SmartPark et journal des derniers passages.
-
-Le serveur n'écoute que sur `127.0.0.1`, ne stocke aucun identifiant et
-réutilise la configuration existante. Thème clair et sombre selon le système.
+`doctor` est le point d'entrée : il contrôle la config, la connexion, les
+véhicules du compte, les tickets en cours, puis pour chaque règle le tarif, le
+devis et la présence d'un `quoteId`. Il n'achète rien.
 
 ---
 
 ## La configuration
 
-Tout est dans `config.yml` (relu à chaque passage, aucun redéploiement).
-
 ```yaml
 rules:
-  - name: 16e — CMI 24 h      # nom libre, sert dans les logs et notifications
-    plate: AB123CD            # plaque, telle qu'enregistrée sur le compte
-    location: "75016"         # numéro de zone affiché sur l'horodateur
-    rate: CMI                 # id, type (CMI/PMR/RES/VIS/PRO) ou bout de nom
-    mode: renew               # renew | smartpark
-    duration: 24h             # renew : durée de chaque ticket
-    window:                   # quand la règle a le droit d'agir
-      days: [lun-sam]         # lun-sam, weekend, [sam, dim], all…
-      from: "17:00"           # large : la règle n'agit que si le ticket expire bientôt
-      to: "23:59"
-    max_cost_per_ticket: 0    # refuse d'acheter au-dessus (0 = gratuit uniquement)
-    max_cost_per_day: 40      # plafond cumulé sur la journée
-    enabled: true
+  - name: 16e — CMI
+    plate: AB123CD
+    location: "75016"       # numéro affiché sur l'horodateur
+    rate: CMI               # type ou nom du tarif — `allovalet rates` le donne
+    duration: 24h
+    renew_at: "20:01"       # rendez-vous quotidien
+    max_cost_per_ticket: 0  # n'achète que si c'est gratuit
 ```
 
-Réglages globaux : `provider` (`paybyphone` / `easypark`), `timezone`,
-`renew_margin_minutes` (on renouvelle quand il reste moins que ça), `notify`.
-
-**Le déclencheur n'est pas l'heure**, c'est l'état : *dans le créneau* **et**
-*aucun ticket ne couvre l'instant présent*. Un passage raté (runner GitHub en
-retard, coupure réseau) est donc rattrapé au passage suivant au lieu d'être
-perdu jusqu'au lendemain — c'est le principal gain de fiabilité face à un
-simple `cron` à 20h01.
-
----
-
-## SmartPark
-
-Le tarif de voirie est progressif : à Paris (1er–11e), 6 h d'affilée coûtent
-~75 €, alors que 3 tickets de 2 h coûtent 3 × 12 = 36 € — chaque nouveau ticket
-repart en bas du barème.
-
-Aucun barème n'est codé en dur : le programme demande de **vrais devis** à
-l'API pour chaque durée possible sur la zone et le tarif concernés, puis
-cherche le découpage optimal (programmation dynamique, type « rendu de
-monnaie »). À prix égal, il prend le moins de tickets possible.
-
-```bash
-python -m allovalet plan --zone 75008 --until 19:00
-```
-
-```
-Barème constaté :
-      1h →   6.00 €
-      2h →  12.00 €
-      3h →  32.50 €
-      6h →  75.00 €
-
-Pour 6h00 de stationnement :
-  3 ticket(s) : 2h + 2h + 2h = 36.00 €  (au lieu de 75.00 € en un seul ticket → -39.00 €, -52 %)
-```
-
-En mode `smartpark`, le prochain morceau est **recalculé à chaque passage** à
-partir du temps réellement restant : si tu pars plus tôt, rien n'est acheté en
-trop.
-
-> À vérifier sur ta ville : certaines communes font continuer le barème
-> progressif sur la journée dans le même secteur, ce qui annule le gain. La
-> commande `plan` te le dira, puisqu'elle lit les prix réels.
-
----
-
-## Notifications
-
-Le plus simple : l'app **ntfy** (iOS/Android, gratuite). Choisis un mot secret,
-abonne-toi à ce sujet, mets-le dans le secret `NTFY_TOPIC`. Tu reçois un push à
-chaque ticket pris et surtout **à chaque échec**. Telegram et un webhook
-générique sont aussi supportés (voir `config.example.yml`).
-
----
-
-## Garde-fous
-
-- `max_cost_per_ticket` / `max_cost_per_day` : le devis est contrôlé **avant**
-  l'achat, un dépassement bloque et notifie.
-- Un ticket est confirmé uniquement s'il est relu côté serveur.
-- Une règle en échec n'empêche pas les autres de s'exécuter.
-- Si la zone refuse un second ticket, le ticket en cours est prolongé.
-- Retry exponentiel sur les erreurs réseau et 5xx.
-- `concurrency` GitHub : deux passages ne peuvent pas se chevaucher.
-
----
-
-## Dépannage
-
-| Symptôme | Cause probable |
-|---|---|
-| `Connexion refusée` | identifiant = numéro **avec indicatif** (`+336…`) ; mot de passe changé |
-| `Tarif « CMI » indisponible` | le libellé exact diffère → `allovalet rates --zone XXXXX` |
-| `Aucun tarif disponible` | mauvais numéro de zone, ou plaque absente du compte |
-| `Ticket non confirmé` | l'achat a été refusé (carte expirée, tarif payant sans moyen de paiement, quota atteint) |
-| Rien ne se passe la nuit | le créneau est en heure de Paris — vérifie `window` |
-
-Les logs détaillés de chaque passage sont dans l'onglet **Actions**.
-`python -m allovalet -v run` donne le détail des requêtes.
+Options globales : `timezone`, `country`, `renew_margin_minutes`, `notify`.
+Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 
 ---
 
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest tests -q
+pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-93 tests, sans réseau : un faux serveur **GraphQL** rejoue le moteur réel
-(connexion, jeton périmé, tarifs, devis, achat via quoteId, renouvellement,
-prolongation, vérification, achat fantôme, introspection), les commandes, les
-routes du tableau de bord, la garantie de couverture (nuit, trou, rendez-vous
-non rejoué), l'horaire réellement configuré, plus les tests unitaires du
-découpage SmartPark — dont une vérification de l'optimum par force brute.
-
-Le rendu du tableau de bord est vérifié au navigateur (Chromium) en thème
-clair et sombre : `docs/dashboard.png` et `docs/dashboard-dark.png`.
+69 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
+vérification, achat fantôme, introspection. Plus la garantie de couverture
+(nuit, trou, rendez-vous non rejoué) et l'horaire réellement configuré — ces
+deux derniers testés sur les fichiers livrés, pas sur des exemples.
 
 ---
 
-## Limites, dites franchement
+## Ce qui n'est toujours pas vérifié
 
-- **Le code n'a pas encore tourné contre un vrai compte** — je n'ai pas les
-  identifiants. Les endpoints, eux, ont été sondés en direct et le moteur est
-  calqué sur celui de l'application. Premier vrai test : `doctor`, puis
-  `run --dry-run`.
-- Il reste un point non vérifiable sans compte : la forme exacte de l'entrée de
-  `startParkingSessionV1`. Le client essaie les formes plausibles l'une après
-  l'autre, et en cas de refus l'erreur contient **la liste des champs réellement
-  acceptés**, obtenue par introspection. `allovalet schema` la donne aussi
-  directement. Si ça coince, c'est une correction d'une ligne.
-- L'API n'est pas publique : si elle change, `doctor` le détectera avant que ça
-  coûte un PV.
-- EasyPark est en secondaire : sa connexion passe par un code SMS (non
-  automatisable) et l'endpoint qui liste les tickets en cours est essayé parmi
-  plusieurs candidats. PayByPhone est le chemin fiable.
-- Usage strictement personnel, sur ses propres véhicules et ses propres droits.
+**Le code n'a jamais tourné contre le vrai compte.** Les endpoints ont été
+sondés en direct et le moteur est calqué sur celui de l'application, mais tant
+que `doctor` n'a pas été lancé avec de vrais identifiants, ça reste une
+hypothèse — y compris la forme exacte de l'entrée de `startParkingSessionV1`,
+pour laquelle le client essaie les variantes plausibles et, en cas de refus,
+affiche les champs réellement acceptés par introspection.
+
+Deux prérequis que seul le titulaire du compte peut confirmer :
+
+- le compte de stationnement est bien chez **PayByPhone** (AlloValet ne gère
+  qu'eux ; ce programme non plus) ;
+- la plaque est enregistrée sur ce compte et le **droit CMI y est rattaché**,
+  sinon aucun tarif CMI n'apparaîtra.

@@ -1,4 +1,8 @@
-"""Chargement et validation de config.yml."""
+"""Chargement et validation de config.yml.
+
+Le modèle est celui d'AlloValet : une règle par véhicule × zone × type de
+ticket, avec un rendez-vous de renouvellement. Rien de plus.
+"""
 
 from __future__ import annotations
 
@@ -14,8 +18,6 @@ from .schedule import Window, parse_duration, parse_time
 
 ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
 
-MODES = {"renew", "smartpark"}
-
 
 def _expand(value):
     """Remplace ${VAR} / ${VAR:-defaut} par les variables d'environnement."""
@@ -30,21 +32,19 @@ def _expand(value):
 
 @dataclass
 class Rule:
+    """« Sur cette plaque, dans cette zone, avec ce tarif, toujours un ticket. »"""
+
     name: str
     plate: str
     location: str
     rate: str | None = None
-    mode: str = "renew"
     duration_minutes: int = 1440
+    renew_at: str | None = None
     window: Window = field(default_factory=Window)
     enabled: bool = True
     stall: str | None = None
     max_cost_per_ticket: float | None = None
-    max_cost_per_day: float | None = None
     renew_margin_minutes: int | None = None
-    renew_at: str | None = None
-    min_chunk_minutes: int = 15
-    max_chunk_minutes: int | None = None
 
     @classmethod
     def parse(cls, data: dict, index: int) -> "Rule":
@@ -56,46 +56,32 @@ class Rule:
                 f"règle #{index + 1} ({data.get('name', 'sans nom')}) : "
                 f"champ(s) manquant(s) {missing}"
             )
-        mode = str(data.get("mode", "renew")).lower()
-        if mode not in MODES:
-            raise ConfigError(f"règle « {data.get('name')} » : mode inconnu {mode!r} ({MODES})")
-
-        duration = data.get("duration", "24h" if mode == "renew" else None)
-        duration_minutes = parse_duration(duration) if duration else 0
-
         rule = cls(
             name=str(data.get("name") or f"règle {index + 1}"),
             plate=str(data["plate"]).upper().replace(" ", "").replace("-", ""),
             location=str(data["location"]).strip(),
             rate=str(data["rate"]).strip() if data.get("rate") else None,
-            mode=mode,
-            duration_minutes=duration_minutes,
-            window=Window.parse(data.get("window")),
-            enabled=bool(data.get("enabled", True)),
-            stall=str(data["stall"]) if data.get("stall") else None,
-            max_cost_per_ticket=_opt_float(data.get("max_cost_per_ticket")),
-            max_cost_per_day=_opt_float(data.get("max_cost_per_day")),
-            renew_margin_minutes=(
-                int(data["renew_margin_minutes"]) if data.get("renew_margin_minutes") else None
-            ),
+            duration_minutes=parse_duration(data.get("duration", "24h")),
             renew_at=(
                 parse_time(data["renew_at"]).strftime("%H:%M") if data.get("renew_at") else None
             ),
-            min_chunk_minutes=int(data.get("min_chunk_minutes", 15)),
-            max_chunk_minutes=(
-                parse_duration(data["max_chunk_minutes"]) if data.get("max_chunk_minutes") else None
+            window=Window.parse(data.get("window")),
+            enabled=bool(data.get("enabled", True)),
+            stall=str(data["stall"]) if data.get("stall") else None,
+            max_cost_per_ticket=(
+                None if data.get("max_cost_per_ticket") is None
+                else float(data["max_cost_per_ticket"])
+            ),
+            renew_margin_minutes=(
+                int(data["renew_margin_minutes"]) if data.get("renew_margin_minutes") else None
             ),
         )
-        if rule.mode == "renew" and rule.duration_minutes <= 0:
-            raise ConfigError(f"règle « {rule.name} » : `duration` requis en mode renew")
+        if rule.duration_minutes <= 0:
+            raise ConfigError(f"règle « {rule.name} » : `duration` doit être positive")
         return rule
 
     def key(self) -> str:
         return f"{self.plate}@{self.location}"
-
-
-def _opt_float(value):
-    return None if value is None else float(value)
 
 
 @dataclass
@@ -130,10 +116,9 @@ class NotifyConfig:
 
 @dataclass
 class Config:
-    provider: str = "paybyphone"
     timezone: str = "Europe/Paris"
-    renew_margin_minutes: int = 20
     country: str = "FR"
+    renew_margin_minutes: int = 25
     dry_run: bool = False
     rules: list[Rule] = field(default_factory=list)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
@@ -143,32 +128,24 @@ class Config:
     def load(cls, path: str | Path) -> "Config":
         path = Path(path)
         if not path.exists():
-            raise ConfigError(
-                f"Config introuvable : {path}\n"
-                "Copie config.example.yml vers config.yml et adapte-le."
-            )
+            raise ConfigError(f"Config introuvable : {path}")
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(raw, dict):
             raise ConfigError(f"{path} : le fichier doit être un objet YAML")
         raw = _expand(raw)
 
-        rules_raw = raw.get("rules") or []
-        if not rules_raw:
+        if not raw.get("rules"):
             raise ConfigError(f"{path} : aucune règle définie (`rules:`)")
 
         cfg = cls(
-            provider=str(raw.get("provider", "paybyphone")).lower(),
             timezone=str(raw.get("timezone", "Europe/Paris")),
-            renew_margin_minutes=int(raw.get("renew_margin_minutes", 20)),
             country=str(raw.get("country", "FR")).upper(),
+            renew_margin_minutes=int(raw.get("renew_margin_minutes", 25)),
             dry_run=bool(raw.get("dry_run", False)),
-            rules=[Rule.parse(r, i) for i, r in enumerate(rules_raw)],
+            rules=[Rule.parse(r, i) for i, r in enumerate(raw["rules"])],
             notify=NotifyConfig.parse(raw.get("notify")),
             path=path,
         )
-        if cfg.provider not in ("paybyphone", "easypark"):
-            raise ConfigError(f"provider inconnu : {cfg.provider}")
-
         seen = set()
         for rule in cfg.rules:
             if rule.name in seen:

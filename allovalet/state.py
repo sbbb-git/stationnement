@@ -33,7 +33,6 @@ class State:
                 self.data = {}
         self.data.setdefault("tokens", {})
         self.data.setdefault("spend", {})
-        self.data.setdefault("savings", [])
         self.data.setdefault("journal", [])
 
     def save(self) -> None:
@@ -79,17 +78,6 @@ class State:
             sum(sum(day.values()) for day in self.data["spend"].values()), 2
         )
 
-    # ------------------------------------------------- règles mises en pause
-
-    def is_disabled(self, rule_name: str) -> bool:
-        return rule_name in self.data.get("disabled", [])
-
-    def set_disabled(self, rule_name: str, disabled: bool) -> None:
-        paused = set(self.data.get("disabled", []))
-        paused.add(rule_name) if disabled else paused.discard(rule_name)
-        self.data["disabled"] = sorted(paused)
-        self.save()
-
     # ------------------------------------------------- actions à faire une fois
 
     def done(self, key: str) -> bool:
@@ -111,28 +99,6 @@ class State:
                 marks.pop(old, None)
         self.save()
         return True
-
-    # -------------------------------------------------------------- SmartPark
-
-    def credit_savings(self, key: str, rule: str, amount: float, detail: str) -> bool:
-        """Crédite l'économie d'un découpage, une seule fois par créneau couvert."""
-        if amount <= 0:
-            return False
-        if any(entry.get("key") == key for entry in self.data["savings"]):
-            return False
-        self.data["savings"].append({
-            "key": key,
-            "at": datetime.now().isoformat(timespec="seconds"),
-            "rule": rule,
-            "amount": round(float(amount), 2),
-            "detail": detail,
-        })
-        del self.data["savings"][:-200]
-        self.save()
-        return True
-
-    def total_savings(self) -> float:
-        return round(sum(float(e.get("amount", 0)) for e in self.data["savings"]), 2)
 
     # --------------------------------------------------------------- journal
 

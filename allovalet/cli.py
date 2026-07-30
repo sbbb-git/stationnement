@@ -1,11 +1,11 @@
-"""Ligne de commande AlloValet perso.
+"""Ligne de commande.
 
-    python -m allovalet run            # un passage (ce que fait GitHub Actions)
-    python -m allovalet status         # tickets en cours + état des règles
-    python -m allovalet doctor         # diagnostic complet, à faire en premier
+    python -m allovalet doctor     # diagnostic complet, à faire en premier
+    python -m allovalet run        # un passage (ce que fait GitHub Actions)
+    python -m allovalet status     # tickets en cours et état des règles
     python -m allovalet rates --zone 75016
-    python -m allovalet plan  --zone 75016 --until 19:00
-    python -m allovalet park  --zone 75016 --duration 2h
+    python -m allovalet park  --zone 75016 --duration 24h
+    python -m allovalet schema     # forme exacte attendue par l'API
 """
 
 from __future__ import annotations
@@ -14,21 +14,19 @@ import argparse
 import logging
 import os
 import sys
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from .config import Config
 from .errors import AlloValetError
-from .models import money, utcnow
+from .models import money
 from .notify import Notifier
-from .paybyphone import best_duration
+from .paybyphone import OPERATION_INPUTS, best_duration
 from .providers import build_client
 from .runner import Runner
-from .schedule import parse_duration, parse_time
-from .smartpark import build_curve, candidate_durations, cheapest_plan
+from .schedule import parse_duration
 from .state import State
 
 log = logging.getLogger("allovalet")
@@ -46,8 +44,7 @@ def setup_logging(verbose: bool) -> None:
 def _context(args):
     cfg = Config.load(args.config)
     state = State()
-    client = build_client(cfg, state)
-    return cfg, state, client
+    return cfg, state, build_client(cfg, state)
 
 
 # ---------------------------------------------------------------- commandes
@@ -56,67 +53,35 @@ def _context(args):
 def cmd_run(args) -> int:
     cfg, state, client = _context(args)
     runner = Runner(cfg, client, state, Notifier(cfg.notify), dry_run=args.dry_run)
-
-    if args.loop:
-        print(f"Boucle locale : un passage toutes les {args.loop} min. Ctrl-C pour arrêter.")
-        while True:
-            _print_report(runner.tick())
-            time.sleep(args.loop * 60)
-
     report = runner.tick()
-    _print_report(report)
-    return 1 if report.failures else 0
-
-
-def _print_report(report) -> None:
     print()
     print(report.text() or "aucune règle active")
     print()
+    return 1 if report.failures else 0
 
 
 def cmd_status(args) -> int:
-    cfg, state, client = _context(args)
+    cfg, _, client = _context(args)
     tz = ZoneInfo(cfg.timezone)
     sessions = client.current_sessions()
 
     print(f"\nTickets en cours ({len(sessions)}) :")
+    for sess in sessions:
+        reste = int(sess.remaining.total_seconds() // 60)
+        print(f"  • {sess.plate} · zone {sess.location_id} · {sess.rate_type or '?'} "
+              f"· jusqu'à {sess.expiry.astimezone(tz):%a %d/%m %H:%M} "
+              f"(reste {reste // 60}h{reste % 60:02d})")
     if not sessions:
         print("  — aucun")
-    for sess in sessions:
-        expiry = sess.expiry.astimezone(tz).strftime("%a %d/%m %H:%M") if sess.expiry else "?"
-        remaining = int(sess.remaining.total_seconds() // 60)
-        print(
-            f"  • {sess.plate} · zone {sess.location_id} · {sess.rate_type or '?'} "
-            f"· jusqu'à {expiry} (reste {remaining // 60}h{remaining % 60:02d})"
-        )
 
     print("\nRègles :")
     now_local = datetime.now(tz)
+    runner = Runner(cfg, client)
     for rule in cfg.rules:
         active = client.find_active(rule.plate, rule.location, sessions)
-        state_txt = "hors créneau"
-        if rule.window.contains(now_local):
-            margin = timedelta(minutes=cfg.margin_for(rule))
-            state_txt = (
-                "couvert" if active and active.covers(utcnow(), margin) else "À PRENDRE"
-            )
+        etat = runner._why_act(rule, active, now_local) or "couvert"
         flag = "" if rule.enabled else " (désactivée)"
-        print(
-            f"  • {rule.name}{flag} — {rule.plate} zone {rule.location} "
-            f"[{rule.mode}] {rule.window.describe()} → {state_txt}"
-        )
-    print()
-    return 0
-
-
-def cmd_vehicles(args) -> int:
-    _, _, client = _context(args)
-    vehicles = client.vehicles()
-    print(f"\nVéhicules du compte ({len(vehicles)}) :")
-    for veh in vehicles:
-        print(f"  • {veh.plate}  (id {veh.id}, {veh.country or '?'}, {veh.type or '?'})")
-    if not vehicles:
-        print("  — aucun véhicule enregistré sur le compte")
+        print(f"  • {rule.name}{flag} — {rule.plate} zone {rule.location} → {etat}")
     print()
     return 0
 
@@ -125,77 +90,15 @@ def cmd_rates(args) -> int:
     cfg, _, client = _context(args)
     plate = args.plate or (cfg.rules[0].plate if cfg.rules else None)
     options = client.rate_options(args.zone, plate)
-    print(f"\nTarifs zone {args.zone} pour {plate or '(sans plaque)'} :")
+    print(f"\nTarifs zone {args.zone} pour {plate} :")
     for opt in options:
-        default = " ⭐ défaut" if opt.is_default else ""
-        max_stay = f", max {opt.max_stay_minutes} min" if opt.max_stay_minutes else ""
+        maxi = f", max {opt.max_stay_minutes} min" if opt.max_stay_minutes else ""
         units = f", unités {'/'.join(opt.accepted_time_units)}" if opt.accepted_time_units else ""
-        print(f"  • id={opt.id}  type={opt.type or '?'}  « {opt.name} »{max_stay}{units}{default}")
+        print(f"  • type={opt.type or '?'}  « {opt.name} »  (ratePolicyId {opt.id}{maxi}{units})")
     if not options:
-        print("  — aucun tarif : zone inconnue ou plaque non éligible")
-    print()
-    return 0
-
-
-def cmd_quote(args) -> int:
-    cfg, _, client = _context(args)
-    plate = args.plate or cfg.rules[0].plate
-    rate = client.pick_rate_option(args.zone, plate, args.rate)
-    minutes = parse_duration(args.duration)
-    duration = best_duration(minutes, rate.accepted_time_units)
-    quote = client.quote(args.zone, plate, duration, rate_option_id=rate.id)
-    tz = ZoneInfo(cfg.timezone)
-    end = quote.expiry.astimezone(tz).strftime("%d/%m %H:%M") if quote.expiry else "?"
-    print(
-        f"\n{plate} · zone {args.zone} · tarif {rate.type or rate.name} · {duration}"
-        f"\n  → {money(quote.cost, quote.currency)}, valable jusqu'à {end}\n"
-    )
-    return 0
-
-
-def cmd_plan(args) -> int:
-    """Simulation SmartPark : combien coûte la journée découpée vs. d'un bloc."""
-    cfg, _, client = _context(args)
-    plate = args.plate or cfg.rules[0].plate
-    tz = ZoneInfo(cfg.timezone)
-    now_local = datetime.now(tz)
-
-    if args.until:
-        end_time = parse_time(args.until)
-        end = now_local.replace(hour=end_time.hour, minute=end_time.minute, second=0, microsecond=0)
-        if end <= now_local:
-            end += timedelta(days=1)
-        minutes = int((end - now_local).total_seconds() // 60)
-    else:
-        minutes = parse_duration(args.duration or "6h")
-
-    rate = client.pick_rate_option(args.zone, plate, args.rate)
-    durations = candidate_durations(rate.max_stay_minutes)
-    print(f"\nInterrogation des tarifs réels zone {args.zone} ({rate.type or rate.name})…")
-
-    def price_of(mins: int):
-        quote = client.quote(
-            args.zone, plate, best_duration(mins, rate.accepted_time_units), rate_option_id=rate.id
-        )
-        real = quote.minutes
-        if real and abs(real - mins) > 5:
-            return None
-        return quote.cost
-
-    curve = build_curve(price_of, durations)
-    if not curve:
-        print("Aucun devis obtenu — zone ou tarif non facturable.\n")
+        print("  — aucun : zone inconnue, ou plaque non éligible sur ce compte")
         return 1
-
-    print("\nBarème constaté :")
-    for mins in sorted(curve):
-        hours, rest = divmod(mins, 60)
-        label = f"{hours}h{rest:02d}" if hours else f"{rest}min"
-        print(f"  {label:>7} → {money(curve[mins]):>9}")
-
-    plan = cheapest_plan(minutes, curve)
-    print(f"\nPour {minutes // 60}h{minutes % 60:02d} de stationnement :")
-    print(f"  {plan.describe()}\n")
+    print("\nC'est la valeur de `type` (ou du nom) à mettre dans `rate:`.\n")
     return 0
 
 
@@ -203,256 +106,31 @@ def cmd_park(args) -> int:
     cfg, state, client = _context(args)
     plate = args.plate or cfg.rules[0].plate
     rate = client.pick_rate_option(args.zone, plate, args.rate)
-    minutes = parse_duration(args.duration)
-    duration = best_duration(minutes, rate.accepted_time_units)
+    duration = best_duration(parse_duration(args.duration), rate.accepted_time_units)
 
     quote = client.quote(args.zone, plate, duration, rate_option_id=rate.id)
-    print(
-        f"\n{plate} · zone {args.zone} · tarif {rate.type or rate.name} · {duration}"
-        f"  →  {money(quote.cost, quote.currency)}"
-    )
-    if not args.yes:
-        answer = input("Confirmer l'achat ? [o/N] ").strip().lower()
-        if answer not in ("o", "oui", "y", "yes"):
-            print("Annulé.")
-            return 1
+    print(f"\n{plate} · zone {args.zone} · {rate.type or rate.name} · {duration}"
+          f"  →  {money(quote.cost, quote.currency)}")
+    if not args.yes and input("Confirmer l'achat ? [o/N] ").strip().lower() not in ("o", "oui"):
+        print("Annulé.")
+        return 1
 
     payment = client.payment_account_id() if quote.cost else None
     session = client.start_session(
-        location_id=args.zone,
-        plate=plate,
-        duration=duration,
-        rate_option_id=rate.id,
-        payment_account_id=payment,
+        location_id=args.zone, plate=plate, duration=duration,
+        rate_option_id=rate.id, payment_account_id=payment,
     )
     tz = ZoneInfo(cfg.timezone)
-    expiry = session.expiry.astimezone(tz).strftime("%d/%m %H:%M") if session.expiry else "?"
-    print(f"✅ Ticket confirmé — expire {expiry}\n")
+    print(f"✅ Ticket confirmé — expire {session.expiry.astimezone(tz):%d/%m %H:%M}\n")
     if quote.cost:
         state.add_spend(f"{plate}@{args.zone}", quote.cost)
     return 0
 
 
-def cmd_doctor(args) -> int:
-    """Vérifie toute la chaîne, règle par règle, sans rien acheter."""
-    problems = 0
-    print("\n=== Diagnostic AlloValet ===\n")
-
-    try:
-        cfg = Config.load(args.config)
-        print(f"[ok] config      {cfg.path} — {len(cfg.rules)} règle(s), "
-              f"fournisseur {cfg.provider}, fuseau {cfg.timezone}")
-    except AlloValetError as exc:
-        print(f"[KO] config      {exc}")
-        return 1
-
-    state = State()
-    try:
-        client = build_client(cfg, state)
-        client.authenticate()
-        print("[ok] connexion   authentifié")
-    except AlloValetError as exc:
-        print(f"[KO] connexion   {exc}")
-        return 1
-
-    try:
-        print(f"[ok] compte      id {client.account_id()}")
-    except AlloValetError as exc:
-        print(f"[KO] compte      {exc}")
-        return 1
-
-    plates = set()
-    try:
-        vehicles = client.vehicles()
-        plates = {v.plate for v in vehicles}
-        print(f"[ok] véhicules   {', '.join(sorted(plates)) or 'aucun'}")
-    except AlloValetError as exc:
-        print(f"[--] véhicules   non listés ({exc})")
-
-    payment = None
-    try:
-        payment = client.payment_account_id()
-        print(f"[{'ok' if payment else '--'}] paiement    "
-              f"{'carte enregistrée' if payment else 'aucune carte (ok si tarif gratuit)'}")
-    except AlloValetError as exc:
-        print(f"[--] paiement    {exc}")
-
-    try:
-        sessions = client.current_sessions()
-        print(f"[ok] tickets     {len(sessions)} en cours")
-    except AlloValetError as exc:
-        print(f"[KO] tickets     {exc}")
-        problems += 1
-
-    tz = ZoneInfo(cfg.timezone)
-    for rule in cfg.rules:
-        print(f"\n--- règle « {rule.name} » ({rule.plate} zone {rule.location}, {rule.mode})")
-        if plates and rule.plate not in plates:
-            print(f"    [KO] plaque {rule.plate} absente du compte")
-            problems += 1
-        try:
-            rate = client.pick_rate_option(rule.location, rule.plate, rule.rate)
-            print(f"    [ok] tarif   {rate.type or '?'} « {rate.name} » (id {rate.id})")
-        except AlloValetError as exc:
-            print(f"    [KO] tarif   {exc}")
-            problems += 1
-            continue
-        minutes = rule.duration_minutes or 60
-        try:
-            duration = best_duration(minutes, rate.accepted_time_units)
-            quote = client.quote(rule.location, rule.plate, duration, rate_option_id=rate.id)
-            print(f"    [ok] devis   {duration} → {money(quote.cost, quote.currency)}")
-            if quote.cost and rule.max_cost_per_ticket == 0:
-                print("    [KO] ce tarif est payant alors que max_cost_per_ticket vaut 0")
-                problems += 1
-        except AlloValetError as exc:
-            print(f"    [--] devis   {exc}")
-        print(f"    [ok] créneau {rule.window.describe()} "
-              f"({'actif maintenant' if rule.window.contains(datetime.now(tz)) else 'inactif'})")
-
-    print(f"\n=== {'Tout est prêt ✅' if not problems else str(problems) + ' problème(s) ❌'} ===\n")
-    return 1 if problems else 0
-
-
-def cmd_web(args) -> int:
-    from .web import serve
-
-    serve(args.config, port=args.port, open_browser=not args.no_browser)
-    return 0
-
-
-def cmd_history(args) -> int:
-    cfg, _, client = _context(args)
-    tz = ZoneInfo(cfg.timezone)
-    sessions = client.history(limit=args.limit)
-    total = sum(s.cost or 0 for s in sessions)
-
-    print(f"\n{len(sessions)} derniers tickets :")
-    for sess in sessions:
-        start = sess.start.astimezone(tz).strftime("%d/%m %H:%M") if sess.start else "?"
-        end = sess.expiry.astimezone(tz).strftime("%H:%M") if sess.expiry else "?"
-        cost = money(sess.cost, sess.currency) if sess.cost else "gratuit"
-        print(f"  • {start}→{end}  {sess.plate}  zone {sess.location_id:<8} "
-              f"{(sess.rate_type or '?'):<10} {cost}")
-    if not sessions:
-        print("  — aucun")
-    else:
-        print(f"\n  Total sur la période : {money(total)}")
-    print("Les justificatifs officiels restent téléchargeables depuis le compte.\n")
-    return 0
-
-
-def cmd_zones(args) -> int:
-    """Le numéro affiché sur l'horodateur est-il utilisable avec ma plaque ?"""
-    cfg, _, client = _context(args)
-    plate = args.plate or (cfg.rules[0].plate if cfg.rules else None)
-    options = client.rate_options(args.number, plate)
-    if not options:
-        print(f"\nZone {args.number} : aucun tarif pour {plate}.")
-        print("Numéro de zone erroné, ou plaque non enregistrée sur le compte.\n")
-        return 1
-    print(f"\nZone {args.number} — utilisable avec {plate} :")
-    for opt in options:
-        print(f"  • {opt.type or '?'} — « {opt.name} » (ratePolicyId {opt.id})")
-    print()
-    return 0
-
-
-def cmd_init(args) -> int:
-    """Génère un config.yml à partir de ce que contient réellement le compte."""
-    from pathlib import Path
-
-    cfg_path = Path(args.config)
-    if cfg_path.exists() and not args.force:
-        print(f"{cfg_path} existe déjà — relance avec --force pour l'écraser.")
-        return 1
-
-    state = State()
-    client = build_client(Config(provider=args.provider), state)  # config vide : on découvre
-    client.authenticate()
-
-    vehicles = client.vehicles()
-    if not vehicles:
-        print("Aucun véhicule sur le compte — ajoute-le d'abord dans l'application.")
-        return 1
-    print("\nVéhicules du compte :")
-    for index, veh in enumerate(vehicles, 1):
-        print(f"  {index}. {veh.plate}")
-    choice = input("Numéro du véhicule à automatiser [1] : ").strip() or "1"
-    plate = vehicles[int(choice) - 1].plate
-
-    zones = input("Zones à couvrir, séparées par des virgules (ex : 75016,75007) : ")
-    rules = []
-    for zone in [z.strip() for z in zones.split(",") if z.strip()]:
-        try:
-            options = client.rate_options(zone, plate)
-        except AlloValetError as exc:
-            print(f"  zone {zone} : {exc}")
-            continue
-        if not options:
-            print(f"  zone {zone} : aucun tarif — ignorée")
-            continue
-        print(f"\nTarifs zone {zone} :")
-        for index, opt in enumerate(options, 1):
-            star = " ⭐" if opt.is_default else ""
-            print(f"  {index}. {opt.type or '?'} — {opt.name}{star}")
-        picked = input(f"Tarif à utiliser zone {zone} [1] : ").strip() or "1"
-        rate = options[int(picked) - 1]
-        duration = input("Durée de chaque ticket [24h] : ").strip() or "24h"
-        rules.append((zone, rate, duration))
-
-    if not rules:
-        print("Aucune règle créée.")
-        return 1
-
-    lines = [
-        "# Généré par `allovalet init` à partir du compte.",
-        f"provider: {args.provider}",
-        "timezone: Europe/Paris",
-        "country: FR",
-        "renew_margin_minutes: 45",
-        "",
-        "notify:",
-        "  ntfy_topic: ${NTFY_TOPIC}",
-        "",
-        "rules:",
-    ]
-    for zone, rate, duration in rules:
-        lines += [
-            f"  - name: {zone} — {rate.type or rate.name}",
-            f"    plate: {plate}",
-            f'    location: "{zone}"',
-            f"    rate: {rate.type or rate.name}",
-            "    mode: renew",
-            f"    duration: {duration}",
-            "    window:",
-            "      days: [lun-sam]",
-            '      from: "17:00"',
-            '      to: "23:59"',
-            "    max_cost_per_ticket: 0",
-            "",
-        ]
-    cfg_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n✅ {cfg_path} écrit ({len(rules)} règle(s)).")
-    print("Vérifie `max_cost_per_ticket` si le tarif choisi est payant, puis :")
-    print("   python -m allovalet doctor\n")
-    return 0
-
-
 def cmd_schema(args) -> int:
-    """Introspecte l'API : la forme exacte attendue par chaque opération.
-
-    C'est le juge de paix si un appel est refusé — l'API dit elle-même ce
-    qu'elle accepte, plus besoin de deviner.
-    """
-    from .paybyphone import OPERATION_INPUTS
-
+    """Introspecte l'API : la forme exacte attendue par chaque opération."""
     _, _, client = _context(args)
     client.authenticate()
-    if not hasattr(client, "input_fields"):
-        print("Introspection disponible seulement avec PayByPhone.")
-        return 1
-
     names = [args.type] if args.type else sorted(set(OPERATION_INPUTS.values()))
     problemes = 0
     for name in names:
@@ -473,70 +151,77 @@ def cmd_schema(args) -> int:
     return 1 if problemes else 0
 
 
-def cmd_login(args) -> int:
-    cfg, state, client = _context(args)
-    client.authenticate()
-    print(f"\n✅ Connecté — compte {client.account_id()}")
-    print("Token mis en cache dans .allovalet_state.json\n")
-    return 0
-
-
-def cmd_easypark_login(args) -> int:
-    """Auth EasyPark par SMS (interactif, une seule fois)."""
-    import json
-    import uuid
-
-    import requests
-
-    base = "https://app-bff.easyparksystem.net"
-    headers = {
-        "easypark-application-channel-name": "Android",
-        "easypark-application-device-os": "Android Mobile",
-        "easypark-application-version-number": "16.5.0",
-        "easypark-application-market-country": "FR",
-        "easypark-application-phone-number-country": "FR",
-        "easypark-application-preferred-language": "fr-FR",
-        "easypark-application-install-id": str(uuid.uuid4()),
-        "Content-Type": "application/json; charset=UTF-8",
-        "User-Agent": "okhttp/4.9.3",
-    }
-    secure_install_id = str(uuid.uuid4())
-    phone = input("Numéro de téléphone EasyPark (ex : +33612345678) : ").strip()
-
-    requests.post(base + "/android/api/account/requestVerificationCode", headers=headers,
-                  json={"loginId": "", "phoneNumber": phone}, timeout=30).raise_for_status()
-    print("Code SMS envoyé.")
-    code = input("Code reçu : ").strip()
-
-    resp = requests.post(
-        base + "/android/api/account/loginWithVerificationCode", headers=headers,
-        json={"countryCode": "FR", "phoneNumber": phone,
-              "secureInstallId": secure_install_id, "verificationCode": code}, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    action = data.get("action", "")
-
-    if "multiFactorVerification" in action:
-        pending = action.split("pendingAccessToken=")[-1].split("&")[0]
-        plate = input("Vérification — plaque d'immatriculation : ").strip().upper()
-        resp = requests.post(
-            base + "/account/verifyAccountWithLicensePlateNumber", headers=headers,
-            json={"licensePlateNumber": plate, "pendingAccessToken": pending,
-                  "phoneNumber": phone}, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+def cmd_doctor(args) -> int:
+    """Vérifie toute la chaîne, règle par règle, sans rien acheter."""
+    problems = 0
+    print("\n=== Diagnostic ===\n")
 
     try:
-        id_token = data["sso"]["idToken"]
-        user_id = str(data["status"]["accounts"][0]["parkingUserId"])
-    except (KeyError, IndexError):
-        print("Réponse inattendue :\n" + json.dumps(data, indent=2)[:2000])
+        cfg = Config.load(args.config)
+        print(f"[ok] config      {cfg.path} — {len(cfg.rules)} règle(s), fuseau {cfg.timezone}")
+    except AlloValetError as exc:
+        print(f"[KO] config      {exc}")
         return 1
 
-    print("\n✅ Authentifié. Ajoute ces deux secrets GitHub (Settings → Secrets → Actions) :")
-    print(f"   EP_ID_TOKEN         = {id_token}")
-    print(f"   EP_PARKING_USER_ID  = {user_id}\n")
-    return 0
+    state = State()
+    try:
+        client = build_client(cfg, state)
+        client.authenticate()
+        print(f"[ok] connexion   authentifié — membre {client.member_id}")
+    except AlloValetError as exc:
+        print(f"[KO] connexion   {exc}")
+        print("\n↳ L'identifiant est le numéro de téléphone avec indicatif (+336…) "
+              "ou l'email du compte PayByPhone.\n")
+        return 1
+
+    plates = set()
+    try:
+        vehicles = client.vehicles()
+        plates = {v.plate for v in vehicles}
+        print(f"[ok] véhicules   {', '.join(sorted(plates)) or 'aucun'}")
+    except AlloValetError as exc:
+        print(f"[KO] véhicules   {exc}")
+        problems += 1
+
+    try:
+        sessions = client.current_sessions()
+        print(f"[ok] tickets     {len(sessions)} en cours")
+        for sess in sessions:
+            print(f"                 {sess.describe()}")
+    except AlloValetError as exc:
+        print(f"[KO] tickets     {exc}")
+        problems += 1
+
+    for rule in cfg.rules:
+        print(f"\n--- règle « {rule.name} » ({rule.plate}, zone {rule.location})")
+        if plates and rule.plate not in plates:
+            print(f"    [KO] plaque {rule.plate} absente du compte PayByPhone")
+            problems += 1
+        try:
+            rate = client.pick_rate_option(rule.location, rule.plate, rule.rate)
+            print(f"    [ok] tarif   {rate.type or '?'} « {rate.name} » (id {rate.id})")
+        except AlloValetError as exc:
+            print(f"    [KO] tarif   {exc}")
+            problems += 1
+            continue
+        try:
+            duration = best_duration(rule.duration_minutes, rate.accepted_time_units)
+            quote = client.quote(rule.location, rule.plate, duration, rate_option_id=rate.id)
+            print(f"    [ok] devis   {duration} → {money(quote.cost, quote.currency)} "
+                  f"(quoteId {'oui' if quote.quote_id else 'MANQUANT'})")
+            if not quote.quote_id:
+                print("    [KO] sans quoteId, l'achat est impossible")
+                problems += 1
+            if quote.cost and rule.max_cost_per_ticket == 0:
+                print("    [KO] ce tarif est payant alors que max_cost_per_ticket vaut 0")
+                problems += 1
+        except AlloValetError as exc:
+            print(f"    [KO] devis   {exc}")
+            problems += 1
+
+    print(f"\n=== {'Tout est prêt ✅' if not problems else str(problems) + ' problème(s) ❌'} ===")
+    print("Aucun ticket n'a été acheté par ce diagnostic.\n")
+    return 1 if problems else 0
 
 
 # -------------------------------------------------------------------- parser
@@ -552,74 +237,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="applique les règles (un passage)")
     run.add_argument("--dry-run", action="store_true", help="n'achète rien, dit ce qu'il ferait")
-    run.add_argument("--loop", type=int, metavar="MINUTES", help="boucle locale toutes les N min")
     run.set_defaults(func=cmd_run)
-
-    status = sub.add_parser("status", help="tickets en cours et état des règles")
-    status.set_defaults(func=cmd_status)
 
     doctor = sub.add_parser("doctor", help="diagnostic complet (n'achète rien)")
     doctor.set_defaults(func=cmd_doctor)
 
-    vehicles = sub.add_parser("vehicles", help="véhicules du compte")
-    vehicles.set_defaults(func=cmd_vehicles)
+    status = sub.add_parser("status", help="tickets en cours et état des règles")
+    status.set_defaults(func=cmd_status)
 
     rates = sub.add_parser("rates", help="tarifs disponibles sur une zone")
     rates.add_argument("--zone", required=True)
     rates.add_argument("--plate")
     rates.set_defaults(func=cmd_rates)
 
-    quote = sub.add_parser("quote", help="prix d'une durée")
-    quote.add_argument("--zone", required=True)
-    quote.add_argument("--duration", required=True)
-    quote.add_argument("--rate")
-    quote.add_argument("--plate")
-    quote.set_defaults(func=cmd_quote)
-
-    plan = sub.add_parser("plan", help="simulation SmartPark (barème réel + découpage)")
-    plan.add_argument("--zone", required=True)
-    plan.add_argument("--until", help="heure de fin, ex. 19:00")
-    plan.add_argument("--duration", help="ou une durée, ex. 6h")
-    plan.add_argument("--rate")
-    plan.add_argument("--plate")
-    plan.set_defaults(func=cmd_plan)
-
     park = sub.add_parser("park", help="prendre un ticket maintenant")
     park.add_argument("--zone", required=True)
-    park.add_argument("--duration", required=True)
+    park.add_argument("--duration", default="24h")
     park.add_argument("--rate")
     park.add_argument("--plate")
-    park.add_argument("--yes", action="store_true", help="sans confirmation")
+    park.add_argument("--yes", action="store_true")
     park.set_defaults(func=cmd_park)
 
-    web = sub.add_parser("web", help="tableau de bord dans le navigateur")
-    web.add_argument("--port", type=int, default=8777)
-    web.add_argument("--no-browser", action="store_true")
-    web.set_defaults(func=cmd_web)
-
-    history = sub.add_parser("history", help="tickets passés et dépense")
-    history.add_argument("--limit", type=int, default=25)
-    history.set_defaults(func=cmd_history)
-
-    zones = sub.add_parser("zones", help="vérifier qu'un numéro de zone est utilisable")
-    zones.add_argument("number")
-    zones.add_argument("--plate")
-    zones.set_defaults(func=cmd_zones)
-
-    init = sub.add_parser("init", help="générer config.yml depuis le compte")
-    init.add_argument("--provider", default="paybyphone")
-    init.add_argument("--force", action="store_true")
-    init.set_defaults(func=cmd_init)
-
     schema = sub.add_parser("schema", help="forme exacte attendue par l'API (introspection)")
-    schema.add_argument("--type", help="un seul type, ex. StartParkingSessionV1Input")
+    schema.add_argument("--type")
     schema.set_defaults(func=cmd_schema)
-
-    login = sub.add_parser("login", help="teste la connexion et met le token en cache")
-    login.set_defaults(func=cmd_login)
-
-    ep = sub.add_parser("easypark-login", help="authentification EasyPark par SMS")
-    ep.set_defaults(func=cmd_easypark_login)
 
     return parser
 
@@ -633,7 +274,6 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "func", None):
         parser.print_help()
         return 0
-
     try:
         return args.func(args)
     except KeyboardInterrupt:
@@ -642,8 +282,9 @@ def main(argv: list[str] | None = None) -> int:
     except AlloValetError as exc:
         log.error("%s", exc)
         try:
-            cfg = Config.load(args.config)
-            Notifier(cfg.notify).send("Stationnement — erreur", str(exc), success=False)
+            Notifier(Config.load(args.config).notify).send(
+                "Stationnement — erreur", str(exc), success=False
+            )
         except Exception:  # noqa: BLE001 — la notif d'erreur ne doit rien casser
             pass
         return 1

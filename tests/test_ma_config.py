@@ -27,7 +27,7 @@ def test_les_deux_zones_demandees():
     rules = ma_config().rules
     assert [r.location for r in rules] == ["75016", "75008"]
     assert {r.plate for r in rules} == {"AB123CD"}
-    assert all(r.enabled and r.mode == "renew" for r in rules)
+    assert all(r.enabled for r in rules)
 
 
 def test_ticket_de_24h_et_gratuit_seulement():

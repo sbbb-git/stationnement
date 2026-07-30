@@ -23,7 +23,6 @@ rules:
     plate: {PLATE}
     location: "75016"
     rate: CMI
-    mode: renew
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0
@@ -43,7 +42,7 @@ def ticket(expiry_local: datetime) -> ParkingSession:
 
 
 def why(runner, now_local, session):
-    return runner._why_act(runner.cfg.rules[0], session, now_local, timedelta(minutes=25))
+    return runner._why_act(runner.cfg.rules[0], session, now_local)
 
 
 # ------------------------------------------------------- garantie de couverture

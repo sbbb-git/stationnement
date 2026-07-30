@@ -14,7 +14,6 @@ rules:
     plate: {PLATE}
     location: "75016"
     rate: CMI
-    mode: renew
     duration: 24h
     max_cost_per_ticket: 0
 """
@@ -46,26 +45,6 @@ def test_status(env, capsys, server):
     assert "À PRENDRE" not in out  # couvert par le ticket en cours
 
 
-def test_vehicles_et_rates(env, capsys):
-    assert main(env + ["vehicles"]) == 0
-    assert main(env + ["rates", "--zone", "75016"]) == 0
-    out = capsys.readouterr().out
-    assert PLATE in out
-    assert "Visiteur" in out
-
-
-def test_quote(env, capsys):
-    assert main(env + ["quote", "--zone", "75016", "--duration", "2h", "--rate", "VIS"]) == 0
-    assert "12.00 €" in capsys.readouterr().out
-
-
-def test_plan_smartpark(env, capsys):
-    assert main(env + ["plan", "--zone", "75008", "--duration", "6h", "--rate", "VIS"]) == 0
-    out = capsys.readouterr().out
-    assert "36.00" in out and "75.00" in out
-    assert "-52 %" in out
-
-
 def test_run_dry_puis_reel(env, capsys, server):
     assert main(env + ["run", "--dry-run"]) == 0
     assert server.purchases == []
@@ -89,32 +68,17 @@ def test_run_signale_lechec(env, capsys, server):
     assert "non confirmé" in capsys.readouterr().out
 
 
-def test_history(env, capsys, server):
-    server.add_past_session(hours_ago=30, cost=6.0)
-    server.add_past_session(hours_ago=2, cost=12.0)
-    server.add_session(minutes=60)  # en cours : ne doit pas apparaître
-
-    assert main(env + ["history"]) == 0
-    out = capsys.readouterr().out
-    assert "2 derniers tickets" in out
-    assert "18.00 €" in out
-
-
-def test_zones(env, capsys):
-    assert main(env + ["zones", "75016"]) == 0
-    assert "CMI" in capsys.readouterr().out
-    assert main(env + ["zones", "99999"]) == 1
-
-
-def test_web_est_bien_cable(env, monkeypatch):
-    appels = {}
-    monkeypatch.setattr(
-        "allovalet.web.serve",
-        lambda config, port, open_browser: appels.update(port=port, browser=open_browser),
-    )
-    assert main(env + ["web", "--port", "9123", "--no-browser"]) == 0
-    assert appels == {"port": 9123, "browser": False}
-
-
 def test_config_absente():
     assert main(["--config", "/introuvable.yml", "run"]) == 1
+
+def test_rates_donne_le_libelle_a_mettre_dans_la_config(env, capsys):
+    assert main(env + ["rates", "--zone", "75016"]) == 0
+    out = capsys.readouterr().out
+    assert "CMI" in out and "ratePolicyId" in out
+    assert main(env + ["rates", "--zone", "99999"]) == 1
+
+
+def test_schema_donne_la_forme_attendue(env, capsys):
+    assert main(env + ["schema", "--type", "StartParkingSessionV1Input"]) == 0
+    out = capsys.readouterr().out
+    assert "quoteId" in out and "plate" in out

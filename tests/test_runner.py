@@ -16,7 +16,6 @@ rules:
     plate: {PLATE}
     location: "75016"
     rate: CMI
-    mode: renew
     duration: 24h
     max_cost_per_ticket: 0
 """
@@ -80,44 +79,6 @@ def test_plafond_bloque_un_tarif_payant(tmp_path, client, state, server):
     assert server.purchases == []
 
 
-def test_plafond_journalier(tmp_path, client, state, server):
-    body = CMI_24H.replace("rate: CMI", "rate: VIS") \
-                  .replace("duration: 24h", "duration: 1h") \
-                  .replace("max_cost_per_ticket: 0", "max_cost_per_day: 10")
-    runner = build(tmp_path, client, state, body)
-
-    assert runner.tick().results[0].status == PURCHASED  # 6 €
-    server.sessions.clear()  # le ticket expire
-    result = runner.tick().results[0]  # 6 € + 6 € > 10 €
-    assert result.status == BLOCKED
-    assert "aujourd'hui" in result.message
-
-
-def test_smartpark_decoupe_au_lieu_dun_gros_ticket(tmp_path, client, state, server):
-    body = f"""
-provider: paybyphone
-timezone: Europe/Paris
-rules:
-  - name: 8e SmartPark
-    plate: {PLATE}
-    location: "75008"
-    rate: VIS
-    mode: smartpark
-    min_chunk_minutes: 30
-    max_cost_per_ticket: 20
-    window:
-      from: "00:00"
-      to: "23:59"
-"""
-    runner = build(tmp_path, client, state, body)
-    report = runner.tick()
-
-    assert report.results[0].status == PURCHASED
-    assert server.purchases[0]["minutes"] <= 120  # jamais le bloc de 6 h à 75 €
-    assert report.results[0].cost <= 12.0
-    assert "SmartPark" in report.results[0].message
-
-
 def test_achat_fantome_remonte_en_echec(tmp_path, client, state, server):
     server.swallow_purchases = True
     runner = build(tmp_path, client, state)
@@ -128,25 +89,12 @@ def test_achat_fantome_remonte_en_echec(tmp_path, client, state, server):
     assert report.failures
 
 
-def test_repli_sur_la_prolongation_si_doublon_refuse(tmp_path, client, state, server):
-    session = server.add_session(minutes=10)
-    server.reject_duplicate = True
-    runner = build(tmp_path, client, state)
-
-    report = runner.tick()
-    assert report.results[0].status == PURCHASED
-    assert len(server.active()) == 1  # prolongé, pas dupliqué
-    assert session["expireTime"] == server.sessions[0]["expireTime"]
-    assert report.results[0].session.remaining > timedelta(hours=20)
-
-
 def test_une_regle_en_echec_nempeche_pas_lautre(tmp_path, client, state, server):
     body = CMI_24H + f"""
   - name: zone inexistante
     plate: {PLATE}
     location: "99999"
     rate: CMI
-    mode: renew
     duration: 1h
 """
     runner = build(tmp_path, client, state, body)
