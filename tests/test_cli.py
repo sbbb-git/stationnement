@@ -56,7 +56,7 @@ def test_vehicles_et_rates(env, capsys):
 
 def test_quote(env, capsys):
     assert main(env + ["quote", "--zone", "75016", "--duration", "2h", "--rate", "VIS"]) == 0
-    assert "12.00 EUR" in capsys.readouterr().out
+    assert "12.00 €" in capsys.readouterr().out
 
 
 def test_plan_smartpark(env, capsys):
@@ -87,6 +87,33 @@ def test_run_signale_lechec(env, capsys, server):
     server.swallow_purchases = True
     assert main(env + ["run"]) == 1
     assert "non confirmé" in capsys.readouterr().out
+
+
+def test_history(env, capsys, server):
+    server.add_past_session(hours_ago=30, cost=6.0)
+    server.add_past_session(hours_ago=2, cost=12.0)
+    server.add_session(minutes=60)  # en cours : ne doit pas apparaître
+
+    assert main(env + ["history"]) == 0
+    out = capsys.readouterr().out
+    assert "2 derniers tickets" in out
+    assert "18.00 €" in out
+
+
+def test_zones(env, capsys):
+    assert main(env + ["zones", "750"]) == 0
+    out = capsys.readouterr().out
+    assert "75016" in out and "75008" in out
+
+
+def test_web_est_bien_cable(env, monkeypatch):
+    appels = {}
+    monkeypatch.setattr(
+        "allovalet.web.serve",
+        lambda config, port, open_browser: appels.update(port=port, browser=open_browser),
+    )
+    assert main(env + ["web", "--port", "9123", "--no-browser"]) == 0
+    assert appels == {"port": 9123, "browser": False}
 
 
 def test_config_absente():

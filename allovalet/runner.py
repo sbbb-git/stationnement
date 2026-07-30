@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config, Rule
 from .errors import ApiError, NotEligibleError
-from .models import ParkingSession, utcnow
+from .models import ParkingSession, money, utcnow
 from .notify import Notifier
 from .paybyphone import best_duration
 from .smartpark import build_curve, candidate_durations, cheapest_plan
@@ -93,6 +93,10 @@ class Runner:
         self._sessions = None
 
         for rule in self.cfg.active_rules():
+            if self.state.is_disabled(rule.name):
+                # mise en pause depuis le tableau de bord, config.yml intact
+                log.info("· [%s] en pause", rule.name)
+                continue
             try:
                 result = self._apply(rule)
             except NotEligibleError as exc:
@@ -103,6 +107,7 @@ class Runner:
             report.results.append(result)
             log.info(result.line())
 
+        self.state.log_run([r.line() for r in report.results])
         self._notify(report)
         return report
 
@@ -151,41 +156,40 @@ class Runner:
                 session=active,
             )
 
-        minutes, plan_note = self._target_minutes(rule, now_local)
+        minutes, plan_note, plan, window_end = self._target_minutes(rule, now_local)
         if minutes <= 0:
             return RuleResult(rule.name, SKIPPED, "rien à couvrir sur ce créneau")
 
-        return self._buy(rule, minutes, plan_note, active)
+        return self._buy(rule, minutes, plan_note, active, plan, window_end)
 
-    def _target_minutes(self, rule: Rule, now_local: datetime) -> tuple[int, str]:
+    def _target_minutes(self, rule: Rule, now_local: datetime):
+        """→ (durée du prochain ticket, commentaire, plan SmartPark, fin du créneau)"""
         if rule.mode == "renew":
-            return rule.duration_minutes, ""
+            return rule.duration_minutes, "", None, None
 
         # --- SmartPark : couvrir jusqu'à la fin du créneau, au meilleur prix
         end = rule.window.end_after(now_local)
         remaining = int((end - now_local).total_seconds() // 60)
         if remaining <= 0:
-            return 0, ""
+            return 0, "", None, end
 
         rate = self._rate_option(rule)
         curve = self._price_curve(rule, rate, now_local)
         if not curve:
             fallback = min(remaining, rule.max_chunk_minutes or 60)
-            return fallback, "aucun devis obtenu — durée par défaut"
+            return fallback, "aucun devis obtenu — durée par défaut", None, end
 
         plan = cheapest_plan(remaining, curve)
         if not plan.chunks:
             fallback = min(remaining, rule.max_chunk_minutes or 60)
-            return fallback, "découpage impossible — durée par défaut"
+            return fallback, "découpage impossible — durée par défaut", None, end
 
         chunk = plan.chunks[0]
         if rule.max_chunk_minutes:
             chunk = min(chunk, rule.max_chunk_minutes)
         chunk = max(chunk, rule.min_chunk_minutes)
-        note = (
-            f"SmartPark jusqu'à {end.strftime('%H:%M')} → {plan.describe()}"
-        )
-        return chunk, note
+        note = f"SmartPark jusqu'à {end.strftime('%H:%M')} → {plan.describe()}"
+        return chunk, note, plan, end
 
     def _rate_option(self, rule: Rule):
         return self.client.pick_rate_option(rule.location, rule.plate, rule.rate)
@@ -226,7 +230,13 @@ class Runner:
         return curve
 
     def _buy(
-        self, rule: Rule, minutes: int, note: str, active: ParkingSession | None
+        self,
+        rule: Rule,
+        minutes: int,
+        note: str,
+        active: ParkingSession | None,
+        plan=None,
+        window_end: datetime | None = None,
     ) -> RuleResult:
         rate = self._rate_option(rule)
         duration = best_duration(minutes, rate.accepted_time_units)
@@ -244,7 +254,7 @@ class Runner:
         if guard:
             return RuleResult(rule.name, BLOCKED, guard, cost=cost or 0.0)
 
-        price_txt = f"{cost:.2f} {quote.currency}" if quote else "prix inconnu"
+        price_txt = money(cost, quote.currency) if quote else "prix inconnu"
         detail = (
             f"zone {rule.location} · {rate.type or rate.name} · {duration} · {price_txt}"
         )
@@ -273,6 +283,15 @@ class Runner:
         self._sessions = None  # l'état a changé
         if cost:
             self.state.add_spend(rule.key(), cost)
+        if plan and window_end:
+            # L'économie du découpage est créditée une fois par créneau couvert,
+            # au premier ticket — pas à chaque morceau.
+            self.state.credit_savings(
+                key=f"{rule.name}:{window_end.isoformat()}",
+                rule=rule.name,
+                amount=plan.savings,
+                detail=plan.describe(),
+            )
         return RuleResult(
             rule.name, PURCHASED,
             f"ticket pris — {detail} · expire {self._local(session.expiry)}",
@@ -301,15 +320,15 @@ class Runner:
             return None
         if rule.max_cost_per_ticket is not None and cost > rule.max_cost_per_ticket + 1e-9:
             return (
-                f"refusé : ticket à {cost:.2f} € > plafond {rule.max_cost_per_ticket:.2f} € "
-                "(`max_cost_per_ticket`)"
+                f"refusé : ticket à {money(cost)} > plafond "
+                f"{money(rule.max_cost_per_ticket)} (`max_cost_per_ticket`)"
             )
         if rule.max_cost_per_day is not None:
             spent = self.state.spent_today(rule.key())
             if spent + cost > rule.max_cost_per_day + 1e-9:
                 return (
-                    f"refusé : {spent:.2f} € déjà dépensés aujourd'hui + {cost:.2f} € "
-                    f"> plafond {rule.max_cost_per_day:.2f} € (`max_cost_per_day`)"
+                    f"refusé : {money(spent)} déjà dépensés aujourd'hui + {money(cost)} "
+                    f"> plafond {money(rule.max_cost_per_day)} (`max_cost_per_day`)"
                 )
         return None
 

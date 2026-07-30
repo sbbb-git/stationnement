@@ -96,6 +96,25 @@ class FakePayByPhone:
         now = datetime.now(timezone.utc)
         return [s for s in self.sessions if _parse(s["expireTime"]) > now]
 
+    def past(self) -> list[dict]:
+        now = datetime.now(timezone.utc)
+        return [s for s in self.sessions if _parse(s["expireTime"]) <= now]
+
+    def add_past_session(self, hours_ago: int = 24, cost: float = 6.0,
+                         plate: str = PLATE, location: str = "75016") -> dict:
+        end = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        session = {
+            "parkingSessionId": str(uuid.uuid4()),
+            "locationId": location,
+            "vehicle": {"licensePlate": plate, "countryCode": "FR"},
+            "startTime": _iso(end - timedelta(hours=1)),
+            "expireTime": _iso(end),
+            "rateOption": {"rateOptionId": "75016", "type": "VIS"},
+            "totalCost": {"amount": cost, "currency": "EUR"},
+        }
+        self.sessions.append(session)
+        return session
+
 
 def _iso(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -159,7 +178,17 @@ def _make_handler(state: FakePayByPhone):
                 return self._quote(query)
 
             if path == f"/parking/accounts/{ACCOUNT_ID}/sessions":
+                if query.get("periodType") == "Historic":
+                    return self._json(state.past()[: int(query.get("limit", 25))])
                 return self._json(state.active())
+
+            if path == "/parking/locations":
+                number = query.get("advertisedLocationNumber", "")
+                return self._json([
+                    {"locationId": zone, "name": f"Paris {zone}", "countryCode": "FR",
+                     "status": "lotOpen"}
+                    for zone in RATE_OPTIONS if number in zone
+                ])
 
             if path.startswith("/events/workflow/"):
                 return self._json({"status": "Completed"})

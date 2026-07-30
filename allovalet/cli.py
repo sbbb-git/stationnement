@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from .config import Config
 from .errors import AlloValetError
-from .models import utcnow
+from .models import money, utcnow
 from .notify import Notifier
 from .paybyphone import best_duration
 from .providers import build_client
@@ -148,7 +148,7 @@ def cmd_quote(args) -> int:
     end = quote.expiry.astimezone(tz).strftime("%d/%m %H:%M") if quote.expiry else "?"
     print(
         f"\n{plate} · zone {args.zone} · tarif {rate.type or rate.name} · {duration}"
-        f"\n  → {quote.cost:.2f} {quote.currency}, valable jusqu'à {end}\n"
+        f"\n  → {money(quote.cost, quote.currency)}, valable jusqu'à {end}\n"
     )
     return 0
 
@@ -191,7 +191,7 @@ def cmd_plan(args) -> int:
     for mins in sorted(curve):
         hours, rest = divmod(mins, 60)
         label = f"{hours}h{rest:02d}" if hours else f"{rest}min"
-        print(f"  {label:>7} → {curve[mins]:6.2f} €")
+        print(f"  {label:>7} → {money(curve[mins]):>9}")
 
     plan = cheapest_plan(minutes, curve)
     print(f"\nPour {minutes // 60}h{minutes % 60:02d} de stationnement :")
@@ -209,7 +209,7 @@ def cmd_park(args) -> int:
     quote = client.quote(args.zone, plate, duration, rate_option_id=rate.id)
     print(
         f"\n{plate} · zone {args.zone} · tarif {rate.type or rate.name} · {duration}"
-        f"  →  {quote.cost:.2f} {quote.currency}"
+        f"  →  {money(quote.cost, quote.currency)}"
     )
     if not args.yes:
         answer = input("Confirmer l'achat ? [o/N] ").strip().lower()
@@ -301,7 +301,7 @@ def cmd_doctor(args) -> int:
         try:
             duration = best_duration(minutes, rate.accepted_time_units)
             quote = client.quote(rule.location, rule.plate, duration, rate_option_id=rate.id)
-            print(f"    [ok] devis   {duration} → {quote.cost:.2f} {quote.currency}")
+            print(f"    [ok] devis   {duration} → {money(quote.cost, quote.currency)}")
             if quote.cost and rule.max_cost_per_ticket == 0:
                 print("    [KO] ce tarif est payant alors que max_cost_per_ticket vaut 0")
                 problems += 1
@@ -312,6 +312,129 @@ def cmd_doctor(args) -> int:
 
     print(f"\n=== {'Tout est prêt ✅' if not problems else str(problems) + ' problème(s) ❌'} ===\n")
     return 1 if problems else 0
+
+
+def cmd_web(args) -> int:
+    from .web import serve
+
+    serve(args.config, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
+def cmd_history(args) -> int:
+    cfg, _, client = _context(args)
+    tz = ZoneInfo(cfg.timezone)
+    sessions = client.history(limit=args.limit)
+    total = sum(s.cost or 0 for s in sessions)
+
+    print(f"\n{len(sessions)} derniers tickets :")
+    for sess in sessions:
+        start = sess.start.astimezone(tz).strftime("%d/%m %H:%M") if sess.start else "?"
+        end = sess.expiry.astimezone(tz).strftime("%H:%M") if sess.expiry else "?"
+        cost = money(sess.cost, sess.currency) if sess.cost else "gratuit"
+        print(f"  • {start}→{end}  {sess.plate}  zone {sess.location_id:<8} "
+              f"{(sess.rate_type or '?'):<10} {cost}")
+    if not sessions:
+        print("  — aucun")
+    else:
+        print(f"\n  Total sur la période : {money(total)}")
+    print("Les justificatifs officiels restent téléchargeables depuis le compte.\n")
+    return 0
+
+
+def cmd_zones(args) -> int:
+    """Retrouve l'identifiant d'une zone à partir du numéro affiché sur l'horodateur."""
+    cfg, _, client = _context(args)
+    results = client.search_location(args.number, country=cfg.country)
+    print(f"\nZones trouvées pour « {args.number} » :")
+    for item in results:
+        print(f"  • id={item.get('locationId')}  {item.get('name', '')} "
+              f"({item.get('countryCode', '')}, {item.get('status', '')})")
+    if not results:
+        print("  — aucune. Vérifie le numéro affiché sur l'horodateur.")
+    print()
+    return 0
+
+
+def cmd_init(args) -> int:
+    """Génère un config.yml à partir de ce que contient réellement le compte."""
+    from pathlib import Path
+
+    cfg_path = Path(args.config)
+    if cfg_path.exists() and not args.force:
+        print(f"{cfg_path} existe déjà — relance avec --force pour l'écraser.")
+        return 1
+
+    state = State()
+    client = build_client(Config(provider=args.provider), state)  # config vide : on découvre
+    client.authenticate()
+
+    vehicles = client.vehicles()
+    if not vehicles:
+        print("Aucun véhicule sur le compte — ajoute-le d'abord dans l'application.")
+        return 1
+    print("\nVéhicules du compte :")
+    for index, veh in enumerate(vehicles, 1):
+        print(f"  {index}. {veh.plate}")
+    choice = input("Numéro du véhicule à automatiser [1] : ").strip() or "1"
+    plate = vehicles[int(choice) - 1].plate
+
+    zones = input("Zones à couvrir, séparées par des virgules (ex : 75016,75007) : ")
+    rules = []
+    for zone in [z.strip() for z in zones.split(",") if z.strip()]:
+        try:
+            options = client.rate_options(zone, plate)
+        except AlloValetError as exc:
+            print(f"  zone {zone} : {exc}")
+            continue
+        if not options:
+            print(f"  zone {zone} : aucun tarif — ignorée")
+            continue
+        print(f"\nTarifs zone {zone} :")
+        for index, opt in enumerate(options, 1):
+            star = " ⭐" if opt.is_default else ""
+            print(f"  {index}. {opt.type or '?'} — {opt.name}{star}")
+        picked = input(f"Tarif à utiliser zone {zone} [1] : ").strip() or "1"
+        rate = options[int(picked) - 1]
+        duration = input("Durée de chaque ticket [24h] : ").strip() or "24h"
+        rules.append((zone, rate, duration))
+
+    if not rules:
+        print("Aucune règle créée.")
+        return 1
+
+    lines = [
+        "# Généré par `allovalet init` à partir du compte.",
+        f"provider: {args.provider}",
+        "timezone: Europe/Paris",
+        "country: FR",
+        "renew_margin_minutes: 45",
+        "",
+        "notify:",
+        "  ntfy_topic: ${NTFY_TOPIC}",
+        "",
+        "rules:",
+    ]
+    for zone, rate, duration in rules:
+        lines += [
+            f"  - name: {zone} — {rate.type or rate.name}",
+            f"    plate: {plate}",
+            f'    location: "{zone}"',
+            f"    rate: {rate.type or rate.name}",
+            "    mode: renew",
+            f"    duration: {duration}",
+            "    window:",
+            "      days: [lun-sam]",
+            '      from: "17:00"',
+            '      to: "23:59"',
+            "    max_cost_per_ticket: 0",
+            "",
+        ]
+    cfg_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\n✅ {cfg_path} écrit ({len(rules)} règle(s)).")
+    print("Vérifie `max_cost_per_ticket` si le tarif choisi est payant, puis :")
+    print("   python -m allovalet doctor\n")
+    return 0
 
 
 def cmd_login(args) -> int:
@@ -432,6 +555,24 @@ def build_parser() -> argparse.ArgumentParser:
     park.add_argument("--plate")
     park.add_argument("--yes", action="store_true", help="sans confirmation")
     park.set_defaults(func=cmd_park)
+
+    web = sub.add_parser("web", help="tableau de bord dans le navigateur")
+    web.add_argument("--port", type=int, default=8777)
+    web.add_argument("--no-browser", action="store_true")
+    web.set_defaults(func=cmd_web)
+
+    history = sub.add_parser("history", help="tickets passés et dépense")
+    history.add_argument("--limit", type=int, default=25)
+    history.set_defaults(func=cmd_history)
+
+    zones = sub.add_parser("zones", help="retrouver l'id d'une zone par son numéro")
+    zones.add_argument("number")
+    zones.set_defaults(func=cmd_zones)
+
+    init = sub.add_parser("init", help="générer config.yml depuis le compte")
+    init.add_argument("--provider", default="paybyphone")
+    init.add_argument("--force", action="store_true")
+    init.set_defaults(func=cmd_init)
 
     login = sub.add_parser("login", help="teste la connexion et met le token en cache")
     login.set_defaults(func=cmd_login)

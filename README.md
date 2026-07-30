@@ -11,7 +11,11 @@ sont découpées pour payer moins cher.
 | Règles par véhicule / zone / code tarif (CMI, résident, visiteur, pro, 2RM) | idem, en YAML |
 | Renouvellement 24 h/24 | passage toutes les 30 min via GitHub Actions |
 | SmartPark™ (découpe pour casser le barème progressif) | `mode: smartpark`, calculé sur les **vrais** prix de l'API |
+| Tableau de bord | `allovalet web`, en local sur ta machine |
+| Justificatifs | `allovalet history` (les reçus officiels restent sur le compte) |
 | 6,35 €/véhicule/mois | 0 € |
+
+![Tableau de bord](docs/dashboard.png)
 
 ---
 
@@ -55,8 +59,12 @@ En local :
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # et remplir
+python -m allovalet init      # génère config.yml depuis ton compte (facultatif)
 python -m allovalet doctor    # n'achète rien
 ```
+
+`init` lit les véhicules du compte, propose les tarifs réellement disponibles
+sur chaque zone que tu indiques, et écrit `config.yml` tout seul.
 
 `doctor` contrôle, règle par règle : connexion, compte, véhicules, moyen de
 paiement, zone joignable, tarif trouvé, prix du ticket, créneau. Il affiche les
@@ -79,19 +87,44 @@ manuel immédiat (case « Simuler » disponible).
 ## Les commandes
 
 ```bash
+python -m allovalet web                           # tableau de bord (voir plus bas)
 python -m allovalet run [--dry-run] [--loop 15]   # applique les règles
 python -m allovalet status                        # tickets en cours + état des règles
 python -m allovalet doctor                        # diagnostic complet
+python -m allovalet init                          # génère config.yml depuis le compte
 python -m allovalet vehicles                      # véhicules du compte
+python -m allovalet zones 75016                   # retrouve l'id d'une zone
 python -m allovalet rates --zone 75016            # tarifs d'une zone
 python -m allovalet quote --zone 75016 --duration 2h
 python -m allovalet plan  --zone 75008 --until 19:00   # simulation SmartPark
 python -m allovalet park  --zone 75016 --duration 24h  # ticket manuel
+python -m allovalet history                       # tickets passés et dépense
 python -m allovalet easypark-login                # auth EasyPark par SMS
 ```
 
 `--loop 15` fait tourner la boucle en local toutes les 15 min — pratique pour
 une journée précise sans dépendre de GitHub.
+
+---
+
+## Le tableau de bord
+
+```bash
+python -m allovalet web        # http://127.0.0.1:8777
+```
+
+C'est l'équivalent de leur interface, en local :
+
+- tickets en cours avec le temps restant,
+- état de chaque règle (couvert / à prendre / en attente / en pause),
+- **mise en pause d'une règle en un clic**, sans toucher à `config.yml`
+  (l'état est stocké à part, la config reste intacte),
+- lancement d'un passage, en réel ou en simulation,
+- ticket manuel et simulation de découpage,
+- total économisé par SmartPark et journal des derniers passages.
+
+Le serveur n'écoute que sur `127.0.0.1`, ne stocke aucun identifiant et
+réutilise la configuration existante. Thème clair et sombre selon le système.
 
 ---
 
@@ -206,10 +239,14 @@ pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
 
-44 tests, sans réseau : un faux serveur PayByPhone rejoue le flux complet
+66 tests, sans réseau : un faux serveur PayByPhone rejoue le flux complet
 (connexion, tarifs, devis, achat, vérification, prolongation, doublon refusé,
-achat fantôme), plus les tests unitaires du découpage SmartPark — dont une
-vérification de l'optimum par force brute.
+achat fantôme), les commandes, les routes du tableau de bord, plus les tests
+unitaires du découpage SmartPark — dont une vérification de l'optimum par
+force brute.
+
+Le rendu du tableau de bord est vérifié au navigateur (Chromium) en thème
+clair et sombre : `docs/dashboard.png` et `docs/dashboard-dark.png`.
 
 ---
 

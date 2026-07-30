@@ -374,8 +374,18 @@ class PayByPhoneClient:
     # -------------------------------------------------------------- tickets
 
     def current_sessions(self) -> list[ParkingSession]:
+        return self._sessions("Current")
+
+    def history(self, limit: int = 25) -> list[ParkingSession]:
+        """Tickets passés — sert de justificatif et de suivi de dépense."""
+        return self._sessions("Historic", limit=limit)
+
+    def _sessions(self, period: str, limit: int | None = None) -> list[ParkingSession]:
+        params: dict = {"periodType": period}
+        if limit:
+            params["limit"] = min(limit, 49)  # borne imposée par l'API
         data = self._get_json(
-            f"/parking/accounts/{self.account_id()}/sessions", params={"periodType": "Current"}
+            f"/parking/accounts/{self.account_id()}/sessions", params=params
         ) or []
         if isinstance(data, dict):
             data = data.get("sessions", data.get("items", []))

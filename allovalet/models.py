@@ -6,6 +6,16 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$", "CHF": "CHF", "CAD": "$"}
+
+
+def money(amount: float | None, currency: str | None = "EUR") -> str:
+    """« 12.00 € » — le symbole plutôt que le code ISO."""
+    if amount is None:
+        return "prix inconnu"
+    return f"{amount:.2f} {SYMBOLS.get((currency or 'EUR').upper(), currency)}"
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 

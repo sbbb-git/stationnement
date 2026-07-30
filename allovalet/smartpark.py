@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from math import gcd
 from typing import Callable, Iterable
 
+from .models import money
+
 log = logging.getLogger("allovalet.smartpark")
 
 # Durées candidates par défaut (minutes) — filtrées ensuite par la durée max de la zone.
@@ -51,11 +53,11 @@ class Plan:
         if not self.chunks:
             return "aucun ticket nécessaire"
         parts = " + ".join(_fmt_minutes(c) for c in self.chunks)
-        line = f"{len(self.chunks)} ticket(s) : {parts} = {self.cost:.2f} {self.currency}"
+        line = f"{len(self.chunks)} ticket(s) : {parts} = {money(self.cost, self.currency)}"
         if self.single_ticket_cost is not None and self.savings > 0:
             line += (
-                f"  (au lieu de {self.single_ticket_cost:.2f} {self.currency} "
-                f"en un seul ticket → -{self.savings:.2f} {self.currency}, "
+                f"  (au lieu de {money(self.single_ticket_cost, self.currency)} "
+                f"en un seul ticket → -{money(self.savings, self.currency)}, "
                 f"-{self.savings_pct:.0f} %)"
             )
         return line
