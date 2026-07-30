@@ -51,6 +51,12 @@ INPUT_FIELDS = {
     "GetVehiclesInput": [],
     "GetPaymentAccountsInput": [],
     "GetParkingSessionsInput": ["periodType", "offset", "limit"],
+    "QuoteRequestInput": ["quoteRequestId", "product", "details"],
+    "QuoteRequestDetailsInput": [
+        "locationId", "advertisedLocationId", "ratePolicyId", "parkingQuoteOperation",
+        "durationTimeUnit", "durationQuantity", "licensePlate", "stall",
+        "parkingSessionId", "isRenewal", "paymentAccountId", "paymentScope",
+    ],
 }
 
 
@@ -247,10 +253,12 @@ def _make_handler(state: FakePayByPhone):
             fields = INPUT_FIELDS.get(name)
             if fields is None:
                 return self._data("__type", None)
+            typage = {"details": "QuoteRequestDetailsInput"}
             return self._data("__type", {
                 "name": name,
                 "inputFields": [
-                    {"name": f, "type": {"name": "String", "kind": "SCALAR", "ofType": None}}
+                    {"name": f, "type": {"name": typage.get(f, "String"),
+                                         "kind": "SCALAR", "ofType": None}}
                     for f in fields
                 ],
             })
@@ -302,6 +310,9 @@ def _make_handler(state: FakePayByPhone):
         def _create_quotes(self, variables):
             request = (variables.get("requests") or [{}])[0]
             details = request.get("details") or {}
+            refus = self._champs_inconnus(details, "QuoteRequestDetailsInput")
+            if refus:
+                return refus
             unit = str(details.get("durationTimeUnit", "Hours")).lower()
             minutes = int(details.get("durationQuantity", 1)) * UNIT_MINUTES.get(unit, 60)
             policy = str(details.get("ratePolicyId") or "")

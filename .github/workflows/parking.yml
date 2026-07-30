@@ -11,6 +11,15 @@ on:
     # les deux heures qui l'encadrent (18h-19h UTC couvre 20h-21h Paris l'été
     # comme l'hiver). GitHub décale ou saute parfois un déclenchement.
     - cron: "11,21,41,51 18-19 * * *"
+  # Chaque correction poussée sur main déclenche un passage réel : c'est ce qui
+  # permet de vérifier une modification sans attendre le prochain créneau.
+  # Sans risque de dépense : `max_cost_per_ticket: 0` n'autorise que le gratuit.
+  push:
+    branches: [main]
+    paths:
+      - "allovalet/**"
+      - "config.yml"
+      - ".github/workflows/parking.yml"
   workflow_dispatch:
     inputs:
       dry_run:

@@ -460,6 +460,22 @@ class PayByPhoneClient:
         self.schema_cache[type_name] = fields
         return set(fields) or None
 
+    def prune_details(self, details: dict) -> dict:
+        """Élague le `details` d'un devis contre son vrai type.
+
+        Le type est trouvé en demandant à l'API la forme de `QuoteRequestInput`,
+        puis celle du type de son champ `details`.
+        """
+        nom = self.schema_cache.get("__details_type")
+        if nom is None:
+            try:
+                champs = dict(self.input_fields("QuoteRequestInput"))
+            except Exception:  # noqa: BLE001
+                champs = {}
+            nom = champs.get("details") or ""
+            self.schema_cache["__details_type"] = nom
+        return self.prune(details, nom) if nom else details
+
     def prune(self, payload: dict, type_name: str) -> dict:
         """Ne garde que les clés que l'API connaît, sans rien inventer.
 
@@ -601,6 +617,9 @@ class PayByPhoneClient:
         payment_account_id: str | None = None,
     ) -> Quote:
         """createQuotesV1 — un prix **et** un quoteId, indispensable pour l'achat."""
+        # On n'envoie que ce qui a une valeur. Un champ vide n'est pas neutre :
+        # `parkingSessionId: ""` sur un démarrage, ou un moyen de paiement vide
+        # sur un tarif gratuit, peuvent suffire à faire refuser le devis.
         details: dict = {
             "locationId": str(location_id),
             "advertisedLocationId": str(location_id),
@@ -609,14 +628,17 @@ class PayByPhoneClient:
             "durationTimeUnit": duration.unit,
             "durationQuantity": str(duration.quantity),
             "licensePlate": plate,
-            "stall": stall or "",
-            "parkingSessionId": session_id or "",
-            "paymentAccountId": payment_account_id or "",
-            "paymentCardType": "",
-            "paymentScope": "Private",
         }
+        if stall:
+            details["stall"] = stall
+        if session_id:
+            details["parkingSessionId"] = session_id
+        if payment_account_id:  # inutile sur un tarif gratuit
+            details["paymentAccountId"] = payment_account_id
+            details["paymentScope"] = "Private"
         if operation == "Renew":
             details["isRenewal"] = True
+        details = self.prune_details(details)
 
         request = {
             "quoteRequestId": str(uuid.uuid4()),
