@@ -48,10 +48,9 @@ INPUT_FIELDS = {
     "StartParkingSessionV1Input": ["quoteId", "plate"],
     "RenewParkingSessionV1Input": ["quoteId", "plate", "parkingSessionId"],
     "GetRateOptionsInput": ["locationId", "plate"],
-    "GetOpenSessionsInput": [],
     "GetVehiclesInput": [],
     "GetPaymentAccountsInput": [],
-    "GetParkingSessionsInput": ["limit"],
+    "GetParkingSessionsInput": ["periodType", "offset", "limit"],
 }
 
 
@@ -223,8 +222,7 @@ def _make_handler(state: FakePayByPhone):
                 "getVehiclesV3": self._vehicles,
                 "getPaymentAccountsV1": self._payment_accounts,
                 "getRateOptionsV1": self._rate_options,
-                "getOpenSessionsV1": self._open_sessions,
-                "getParkingSessionsV1": self._past_sessions,
+                "getParkingSessionsV1": self._sessions,
                 "createQuotesV1": self._create_quotes,
                 "startParkingSessionV1": self._start,
                 "renewParkingSessionV1": self._renew,
@@ -274,13 +272,22 @@ def _make_handler(state: FakePayByPhone):
                 f'Field "{inconnus[0]}" is not defined by type "{type_name}".'
             )
 
-        def _open_sessions(self, variables):
-            refus = self._champs_inconnus(variables.get("input") or {}, "GetOpenSessionsInput")
-            return refus or self._data("getOpenSessionsV1", state.active())
-
-        def _past_sessions(self, variables):
-            limit = int((variables.get("input") or {}).get("limit", 25))
-            return self._data("getParkingSessionsV1", state.past()[:limit])
+        def _sessions(self, variables):
+            payload = variables.get("input") or {}
+            refus = self._champs_inconnus(payload, "GetParkingSessionsInput")
+            if refus:
+                return refus
+            periode = payload.get("periodType")
+            if periode not in ("Current", "Historic"):  # énumération stricte, comme en vrai
+                return self._error(
+                    f'Expected type "PeriodType", found {periode}. '
+                    "Valid values: Current, Historic."
+                )
+            if periode == "Historic":
+                return self._data(
+                    "getParkingSessionsV1", state.past()[: int(payload.get("limit", 25))]
+                )
+            return self._data("getParkingSessionsV1", state.active())
 
         def _create_quotes(self, variables):
             request = (variables.get("requests") or [{}])[0]

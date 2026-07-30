@@ -15,9 +15,9 @@ def test_enchainement_devis_puis_achat(client, server):
         rate_option_id=CMI_POLICY,
     )
     ordre = [op for op in server.operations if op in
-             ("createQuotesV1", "startParkingSessionV1", "getOpenSessionsV1")]
+             ("createQuotesV1", "startParkingSessionV1", "getParkingSessionsV1")]
     assert ordre.index("createQuotesV1") < ordre.index("startParkingSessionV1")
-    assert ordre[-1] == "getOpenSessionsV1"  # vérification en dernier
+    assert ordre[-1] == "getParkingSessionsV1"  # vérification en dernier
 
     achat = server.purchases[0]
     assert achat["quoteId"] in server.quotes  # l'achat référence bien le devis
@@ -128,7 +128,7 @@ def test_les_champs_inconnus_sont_elagues(client, server):
 def test_input_vide_pour_les_sessions_ouvertes(client, server):
     """L'application envoie {} : un champ inventé ferait tout rejeter."""
     assert client.current_sessions() == []
-    assert "getOpenSessionsV1" in server.operations
+    assert "getParkingSessionsV1" in server.operations
 
 
 def test_le_schema_nest_interroge_quune_fois(client, server):

@@ -44,10 +44,16 @@ bien que le site charge un capteur HUMAN/PerimeterX
 | `startParkingSessionV1` | `StartParkingSessionV1Input` | **achat** à partir du quoteId |
 | `renewParkingSessionV1` | `RenewParkingSessionV1Input` | renouvellement d'une session |
 | `extendParkingSessionV1` | `ExtendParkingSessionV1Input` | prolongation |
-| `getOpenSessionsV1` | `GetOpenSessionsInput` | tickets en cours (= vérification) |
-| `getParkingSessionsV1` | `GetParkingSessionsInput` | historique |
+| `getParkingSessionsV1` | `GetParkingSessionsInput` | tickets en cours **et** historique |
+
+**Piège vérifié contre le vrai compte :** `getOpenSessionsV1` n'est *pas* la
+liste des tickets de voirie. Il renvoie un `AutopaySessionResponse` — les
+parkings en ouvrage. Les tickets de voirie sont dans `getParkingSessionsV1`,
+dont l'entrée est `{periodType, offset?, limit?}` avec `periodType` une
+énumération (`Current` / `Historic`).
 
 Autres opérations repérées et non utilisées : `stopParkingSessionV1`,
+`getOpenSessionsV1`,
 `getRateOptionsRenewalV1`, `applyEligibilityV1`, `getEligibilitiesV1`,
 `getLocationsV1`, `createJobV1` / `getJobV1`.
 
@@ -100,7 +106,8 @@ inventé fait rejeter toute la requête par GraphQL.
 
 Deux relevés sûrs, obtenus en remontant aux sites d'appel :
 
-- `getOpenSessionsV1` est appelé avec **`input: {}`** (map vide) ;
+- `getParkingSessionsV1` prend `{periodType, offset, limit}` — relevé dans le
+  sérialiseur `axR` de l'application ;
 - `{locationId, vehicleId, plate}` appartient à `getPoeLookupQuoteV1`, **pas**
   à `getRateOptionsV1` — piège classique.
 

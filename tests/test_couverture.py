@@ -6,7 +6,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from allovalet.models import ParkingSession, utcnow
+from allovalet.models import ParkingSession
 from allovalet.notify import Notifier
 from allovalet.runner import OK, PURCHASED, Runner
 from tests.conftest import make_config
@@ -64,8 +64,8 @@ def test_ticket_qui_va_expirer_est_repris_a_toute_heure(tmp_path, client, state,
 
 def test_ticket_confortable_ne_declenche_rien(tmp_path, client, state, server):
     runner = build(tmp_path, client, state)
-    midi = datetime.now(PARIS).replace(hour=12, minute=0, second=0, microsecond=0)
-    tranquille = ticket(utcnow() + timedelta(hours=8))
+    midi = datetime(2026, 3, 12, 12, 0, tzinfo=PARIS)
+    tranquille = ticket(midi + timedelta(hours=8))
     assert why(runner, midi, tranquille) is None
 
 

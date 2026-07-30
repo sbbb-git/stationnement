@@ -81,9 +81,9 @@ query GetVehiclesV3($input: GetVehiclesInput!) {
 }
 """
 
-Q_OPEN_SESSIONS = """
-query GetOpenSessionsV1($input: GetOpenSessionsInput!) {
-  getOpenSessionsV1(input: $input) { %s }
+Q_SESSIONS = """
+query GetParkingSessionsV1($input: GetParkingSessionsInput!) {
+  getParkingSessionsV1(input: $input) { %s }
 }
 """ % SESSION_FIELDS
 
@@ -169,7 +169,7 @@ query Introspect($name: String!) {
 # Les opérations et leurs types d'entrée, telles que l'application les utilise.
 OPERATION_INPUTS = {
     "getVehiclesV3": "GetVehiclesInput",
-    "getOpenSessionsV1": "GetOpenSessionsInput",
+    "getParkingSessionsV1": "GetParkingSessionsInput",
     "getRateOptionsV1": "GetRateOptionsInput",
     "getPaymentAccountsV1": "GetPaymentAccountsInput",
     "createQuotesV1": "QuoteRequestInput",
@@ -204,6 +204,11 @@ def best_duration(minutes: int, accepted: list[str] | None = None) -> Duration:
     if minutes % 60 == 0 and "hours" in accepted:
         return Duration(minutes // 60, "Hours")
     return Duration(max(1, -(-minutes // 60)), "Hours")
+
+
+def _enum_variants(value: str) -> list[str]:
+    """« Current », « CURRENT », « current » — on essaie les orthographes usuelles."""
+    return list(dict.fromkeys([value, value.upper(), value.lower()]))
 
 
 def _jwt_claims(token: str) -> dict:
@@ -608,26 +613,40 @@ class PayByPhoneClient:
         )
 
     def current_sessions(self) -> list[ParkingSession]:
-        # L'application envoie un input vide : on fait pareil. Un champ inventé
-        # ici ferait rejeter toute la requête.
-        data = self.gql(Q_OPEN_SESSIONS, {"input": {}}, "getOpenSessionsV1") or []
-        return [self._to_session(item) for item in data]
+        """Tickets en cours.
+
+        C'est `getParkingSessionsV1`, pas `getOpenSessionsV1` : ce dernier
+        renvoie un `AutopaySessionResponse` — les parkings en ouvrage, pas la
+        voirie. L'API l'a dit elle-même au premier essai contre le vrai compte.
+        """
+        sessions = self._sessions("Current")
+        maintenant = utcnow()
+        return [s for s in sessions if s.expiry and s.expiry > maintenant]
 
     def history(self, limit: int = 25) -> list[ParkingSession]:
-        query = """
-query GetParkingSessionsV1($input: GetParkingSessionsInput!) {
-  getParkingSessionsV1(input: $input) {
-    parkingSessionId locationId startTime expireTime
-    vehicle { licensePlate }
-    ratePolicy { ratePolicyId type }
-    totalCost { amount currency }
-  }
-}
-"""
-        data = self.gql(
-            query, {"input": {"limit": min(limit, 49)}}, "getParkingSessionsV1"
-        ) or []
-        return [self._to_session(item) for item in data]
+        return self._sessions("Historic", limit=limit)
+
+    def _sessions(self, period: str, limit: int | None = None) -> list[ParkingSession]:
+        payload: dict = {"periodType": period}
+        if limit:
+            payload["limit"] = min(limit, 49)
+        payload = self.prune(payload, "GetParkingSessionsInput") or {"periodType": period}
+
+        # `periodType` est une énumération : l'orthographe exacte peut différer.
+        derniere: ApiError | None = None
+        for valeur in _enum_variants(period):
+            try:
+                data = self.gql(
+                    Q_SESSIONS, {"input": {**payload, "periodType": valeur}},
+                    "getParkingSessionsV1",
+                ) or []
+            except ApiError as exc:
+                derniere = exc
+                if "enum" not in str(exc).lower() and "periodtype" not in str(exc).lower():
+                    raise
+                continue
+            return [self._to_session(item) for item in data]
+        raise derniere or ApiError("getParkingSessionsV1 : aucune période acceptée.")
 
     def find_active(self, plate, location_id=None, sessions=None):
         plate = plate.upper().replace(" ", "")

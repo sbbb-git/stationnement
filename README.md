@@ -56,7 +56,7 @@ PayByPhone — méthode et détails dans [docs/api-paybyphone.md](docs/api-payby
 ```
 createQuotesV1         →  un devis, et surtout un quoteId
 startParkingSessionV1  →  l'achat, à partir de ce quoteId
-getOpenSessionsV1      →  vérification que le ticket existe vraiment
+getParkingSessionsV1   →  vérification que le ticket existe vraiment
 ```
 
 Un ticket n'est déclaré pris que lorsqu'il a été **relu depuis le serveur**.
@@ -154,12 +154,18 @@ deux derniers testés sur les fichiers livrés, pas sur des exemples.
 
 ---
 
-## Ce qui n'est toujours pas vérifié
+## État réel, vérifié contre le compte
 
-**Le code n'a jamais tourné contre le vrai compte.** Les endpoints ont été
-sondés en direct et le moteur est calqué sur celui de l'application, mais tant
-que `doctor` n'a pas été lancé avec de vrais identifiants, ça reste une
-hypothèse.
+Premier passage contre le vrai compte le 30/07/2026 :
+
+- **la connexion fonctionne** (`Connecté ✅`) — identifiants, `grant_type=password`
+  et `client_id=paybyphone_web` sont les bons ;
+- la lecture des tickets échouait parce que j'utilisais `getOpenSessionsV1`,
+  qui renvoie un `AutopaySessionResponse` (parkings en ouvrage). C'est
+  `getParkingSessionsV1` qu'il faut, avec `{periodType: Current}`. Corrigé.
+
+Le reste de la chaîne — tarifs, devis, achat, vérification — n'a pas encore pu
+s'exécuter : il faut un nouveau passage.
 
 Ce qui a été fait pour que ça ne dépende pas de mes suppositions : **le client
 ne devine plus la forme des requêtes.** Il introspecte chaque type d'entrée,
