@@ -343,15 +343,17 @@ def cmd_history(args) -> int:
 
 
 def cmd_zones(args) -> int:
-    """Retrouve l'identifiant d'une zone à partir du numéro affiché sur l'horodateur."""
+    """Le numéro affiché sur l'horodateur est-il utilisable avec ma plaque ?"""
     cfg, _, client = _context(args)
-    results = client.search_location(args.number, country=cfg.country)
-    print(f"\nZones trouvées pour « {args.number} » :")
-    for item in results:
-        print(f"  • id={item.get('locationId')}  {item.get('name', '')} "
-              f"({item.get('countryCode', '')}, {item.get('status', '')})")
-    if not results:
-        print("  — aucune. Vérifie le numéro affiché sur l'horodateur.")
+    plate = args.plate or (cfg.rules[0].plate if cfg.rules else None)
+    options = client.rate_options(args.number, plate)
+    if not options:
+        print(f"\nZone {args.number} : aucun tarif pour {plate}.")
+        print("Numéro de zone erroné, ou plaque non enregistrée sur le compte.\n")
+        return 1
+    print(f"\nZone {args.number} — utilisable avec {plate} :")
+    for opt in options:
+        print(f"  • {opt.type or '?'} — « {opt.name} » (ratePolicyId {opt.id})")
     print()
     return 0
 
@@ -435,6 +437,40 @@ def cmd_init(args) -> int:
     print("Vérifie `max_cost_per_ticket` si le tarif choisi est payant, puis :")
     print("   python -m allovalet doctor\n")
     return 0
+
+
+def cmd_schema(args) -> int:
+    """Introspecte l'API : la forme exacte attendue par chaque opération.
+
+    C'est le juge de paix si un appel est refusé — l'API dit elle-même ce
+    qu'elle accepte, plus besoin de deviner.
+    """
+    from .paybyphone import OPERATION_INPUTS
+
+    _, _, client = _context(args)
+    client.authenticate()
+    if not hasattr(client, "input_fields"):
+        print("Introspection disponible seulement avec PayByPhone.")
+        return 1
+
+    names = [args.type] if args.type else sorted(set(OPERATION_INPUTS.values()))
+    problemes = 0
+    for name in names:
+        try:
+            fields = client.input_fields(name)
+        except AlloValetError as exc:
+            print(f"\n{name} : introspection refusée — {exc}")
+            problemes += 1
+            continue
+        if not fields:
+            print(f"\n{name} : type inconnu de l'API")
+            problemes += 1
+            continue
+        print(f"\n{name}")
+        for field, kind in fields:
+            print(f"    {field:<32} {kind}")
+    print()
+    return 1 if problemes else 0
 
 
 def cmd_login(args) -> int:
@@ -565,14 +601,19 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--limit", type=int, default=25)
     history.set_defaults(func=cmd_history)
 
-    zones = sub.add_parser("zones", help="retrouver l'id d'une zone par son numéro")
+    zones = sub.add_parser("zones", help="vérifier qu'un numéro de zone est utilisable")
     zones.add_argument("number")
+    zones.add_argument("--plate")
     zones.set_defaults(func=cmd_zones)
 
     init = sub.add_parser("init", help="générer config.yml depuis le compte")
     init.add_argument("--provider", default="paybyphone")
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=cmd_init)
+
+    schema = sub.add_parser("schema", help="forme exacte attendue par l'API (introspection)")
+    schema.add_argument("--type", help="un seul type, ex. StartParkingSessionV1Input")
+    schema.set_defaults(func=cmd_schema)
 
     login = sub.add_parser("login", help="teste la connexion et met le token en cache")
     login.set_defaults(func=cmd_login)

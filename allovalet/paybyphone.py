@@ -1,16 +1,34 @@
-"""Client PayByPhone — l'API utilisée par AlloValet.
+"""Client PayByPhone — le moteur réel, celui de l'application.
 
-Flux réel d'un ticket (c'est là que l'ancien script se plantait) :
+Comment ces appels ont été établis
+----------------------------------
+L'application PayByPhone (m.paybyphone.com) est une app Flutter : son bundle
+`main.dart.js` contient en clair les noms d'opérations GraphQL, les types
+d'entrée et les champs de réponse. Tout ce qui suit en vient, plus une sonde
+des endpoints :
 
-    1. token         POST  auth.paybyphoneapis.com/token
-    2. compte        GET   /parking/accounts
-    3. tarifs        GET   /parking/locations/{zone}/rateOptions
-    4. devis         GET   /parking/accounts/{id}/quote          ← ne réserve RIEN
-    5. ACHAT         POST  /parking/accounts/{id}/sessions       ← le vrai ticket
-    6. VÉRIFICATION  GET   /parking/accounts/{id}/sessions?periodType=Current
+    POST auth.paybyphoneapis.com/token          → 400 invalid_grant  (vivant)
+    POST consumer.paybyphoneapis.com/uapi/graphql → 401              (vivant)
+    GET  consumer.paybyphoneapis.com/parking/accounts → 404 page not found
 
-Un devis (`quote` / `createQuotesV1`) n'est qu'une estimation de prix : sans
-l'étape 5 aucun ticket n'existe, et sans l'étape 6 on ne peut pas l'affirmer.
+La troisième ligne est la raison pour laquelle la version précédente ne pouvait
+pas marcher : **l'API REST n'existe plus**. Tout passe par GraphQL.
+
+Le vrai enchaînement d'un ticket
+--------------------------------
+    createQuotesV1        → un devis, et surtout un quoteId
+    startParkingSessionV1 → l'achat, à partir de ce quoteId
+    getOpenSessionsV1     → vérification que le ticket existe
+
+Un devis seul n'achète rien : c'est là que s'arrêtait l'ancien script.
+
+Renouvellement
+--------------
+Chaque session dit elle-même `isRenewable` et `renewableAfter`. Quand une
+session en cours est renouvelable, on passe par `parkingQuoteOperation: Renew`
+puis `renewParkingSessionV1` plutôt que de créer une seconde session : c'est le
+mécanisme prévu par l'API, et celui qu'utilisent les services du genre
+AlloValet.
 """
 
 from __future__ import annotations
@@ -19,6 +37,7 @@ import base64
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -30,7 +49,7 @@ log = logging.getLogger("allovalet.paybyphone")
 
 AUTH_URL = "https://auth.paybyphoneapis.com/token"
 API_BASE = "https://consumer.paybyphoneapis.com"
-GRAPHQL_URL = f"{API_BASE}/uapi/graphql"
+GRAPHQL_PATH = "/uapi/graphql"
 CLIENT_ID = "paybyphone_web"
 WEB_ORIGIN = "https://m.paybyphone.com"
 
@@ -39,14 +58,129 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
-# Marge avant expiration du token pour le renouveler d'office.
 TOKEN_SKEW = timedelta(seconds=90)
+
+# --------------------------------------------------------------------- GraphQL
+
+SESSION_FIELDS = """
+  parkingSessionId
+  locationId
+  startTime
+  expireTime
+  stall
+  isRenewable
+  renewableAfter
+  isExtendable
+  vehicle { licensePlate countryCode }
+  ratePolicy { ratePolicyId type }
+"""
+
+Q_VEHICLES = """
+query GetVehiclesV3($input: GetVehiclesInput!) {
+  getVehiclesV3(input: $input) { id licensePlate countryCode type jurisdiction }
+}
+"""
+
+Q_OPEN_SESSIONS = """
+query GetOpenSessionsV1($input: GetOpenSessionsInput!) {
+  getOpenSessionsV1(input: $input) { %s }
+}
+""" % SESSION_FIELDS
+
+Q_RATE_OPTIONS = """
+query GetRateOptionsV1($input: GetRateOptionsInput!) {
+  getRateOptionsV1(input: $input) {
+    name
+    type
+    ratePolicyId
+    maxStayStatus
+    acceptedTimeUnits
+    effectiveMaxStayDuration { quantity timeUnit }
+  }
+}
+"""
+
+Q_PAYMENT_ACCOUNTS = """
+query GetPaymentAccountsV1($input: GetPaymentAccountsInput!) {
+  getPaymentAccountsV1(input: $input) { paymentAccountId }
+}
+"""
+
+M_CREATE_QUOTES = """
+mutation CreateQuotesV1($requests: [QuoteRequestInput!]!) {
+  createQuotesV1(input: { requests: $requests }) {
+    createQuotesResponse {
+      quotes {
+        quoteId
+        details {
+          locationId
+          parkingStartTime
+          parkingExpiryTime
+          totalCost { amount currency }
+        }
+      }
+      quoteErrors { quoteRequestId status reason }
+    }
+  }
+}
+"""
+
+M_START = """
+mutation StartParkingSessionV1($input: StartParkingSessionV1Input!) {
+  startParkingSessionV1(input: $input) {
+    parkingSessionResponse {
+      parkingSessionId
+      expireTime
+      segmentTotalCost { amount currency }
+    }
+  }
+}
+"""
+
+M_RENEW = """
+mutation RenewParkingSessionV1($input: RenewParkingSessionV1Input!) {
+  renewParkingSessionV1(input: $input) {
+    parkingSessionResponse {
+      parkingSessionId
+      expireTime
+      segmentTotalCost { amount currency }
+    }
+  }
+}
+"""
+
+M_EXTEND = """
+mutation ExtendParkingSessionV1($input: ExtendParkingSessionV1Input!) {
+  extendParkingSessionV1(input: $input) {
+    parkingSessionResponse { parkingSessionId expireTime }
+  }
+}
+"""
+
+Q_INTROSPECT_INPUT = """
+query Introspect($name: String!) {
+  __type(name: $name) {
+    name
+    inputFields { name type { name kind ofType { name kind } } }
+  }
+}
+"""
+
+# Les opérations et leurs types d'entrée, telles que l'application les utilise.
+OPERATION_INPUTS = {
+    "getVehiclesV3": "GetVehiclesInput",
+    "getOpenSessionsV1": "GetOpenSessionsInput",
+    "getRateOptionsV1": "GetRateOptionsInput",
+    "getPaymentAccountsV1": "GetPaymentAccountsInput",
+    "createQuotesV1": "QuoteRequestInput",
+    "startParkingSessionV1": "StartParkingSessionV1Input",
+    "renewParkingSessionV1": "RenewParkingSessionV1Input",
+    "extendParkingSessionV1": "ExtendParkingSessionV1Input",
+}
 
 
 @dataclass
 class Duration:
-    """Une durée exprimée dans une unité acceptée par PayByPhone."""
-
     quantity: int
     unit: str  # Minutes | Hours | Days
 
@@ -69,17 +203,15 @@ def best_duration(minutes: int, accepted: list[str] | None = None) -> Duration:
         return Duration(minutes, "Minutes")
     if minutes % 60 == 0 and "hours" in accepted:
         return Duration(minutes // 60, "Hours")
-    # la zone n'accepte ni minutes ni heures rondes : on arrondit à l'heure supérieure
     return Duration(max(1, -(-minutes // 60)), "Hours")
 
 
 def _jwt_claims(token: str) -> dict:
-    """Décode le payload d'un JWT sans vérifier la signature (lecture seule)."""
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         return json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:  # token opaque ou malformé
+    except Exception:
         return {}
 
 
@@ -92,6 +224,7 @@ class PayByPhoneClient:
         access_token: str | None = None,
         expires_at: datetime | None = None,
         on_token_refresh=None,
+        country: str = "FR",
     ):
         self.username = username
         self.password = password
@@ -99,8 +232,8 @@ class PayByPhoneClient:
         self._access_token = access_token
         self._expires_at = expires_at
         self.on_token_refresh = on_token_refresh
+        self.country = country
         self.http = HttpClient(API_BASE)
-        self._account_id: str | None = None
 
     # ------------------------------------------------------------------ auth
 
@@ -122,16 +255,13 @@ class PayByPhoneClient:
             self.refresh_token = data["refresh_token"]
         self._expires_at = utcnow() + timedelta(seconds=int(data.get("expires_in", 3600)))
         if self.on_token_refresh:
-            self.on_token_refresh(
-                {
-                    "access_token": self._access_token,
-                    "refresh_token": self.refresh_token,
-                    "expires_at": self._expires_at.isoformat(),
-                }
-            )
+            self.on_token_refresh({
+                "access_token": self._access_token,
+                "refresh_token": self.refresh_token,
+                "expires_at": self._expires_at.isoformat(),
+            })
 
     def login(self) -> None:
-        """Connexion par identifiants — pas de rotation de token à gérer."""
         if not (self.username and self.password):
             raise AuthError("PBP_USERNAME / PBP_PASSWORD manquants.")
         log.info("Connexion PayByPhone (%s)…", self.username)
@@ -146,9 +276,15 @@ class PayByPhoneClient:
             },
         )
         if resp.status_code != 200:
+            detail = ""
+            try:
+                body = resp.json()
+                detail = body.get("error_description") or body.get("error") or ""
+            except ValueError:
+                detail = resp.text[:300]
             raise AuthError(
-                "Connexion refusée — vérifie identifiant (numéro de téléphone ou email) "
-                f"et mot de passe.\nHTTP {resp.status_code} : {resp.text[:500]}"
+                "Connexion refusée — vérifie l'identifiant (numéro avec indicatif "
+                f"« +336… » ou email) et le mot de passe.\n↳ {detail}"
             )
         self._store_tokens(resp.json())
         log.info("Connecté ✅")
@@ -156,7 +292,6 @@ class PayByPhoneClient:
     def refresh(self) -> None:
         if not self.refresh_token:
             raise AuthError("Pas de refresh_token.")
-        log.info("Renouvellement du token…")
         resp = self.http.post(
             AUTH_URL,
             headers=self._auth_headers(),
@@ -167,11 +302,10 @@ class PayByPhoneClient:
             },
         )
         if resp.status_code != 200:
-            raise AuthError(f"Refresh refusé — HTTP {resp.status_code} : {resp.text[:300]}")
+            raise AuthError(f"Refresh refusé — HTTP {resp.status_code}")
         self._store_tokens(resp.json())
 
     def authenticate(self) -> None:
-        """Obtient un access_token valide, par le chemin le plus fiable disponible."""
         if self._access_token and self._expires_at and utcnow() + TOKEN_SKEW < self._expires_at:
             return
         if self.refresh_token:
@@ -179,7 +313,7 @@ class PayByPhoneClient:
                 self.refresh()
                 return
             except AuthError as exc:
-                log.warning("Refresh impossible (%s) — bascule sur identifiant/mot de passe.", exc)
+                log.warning("Refresh impossible (%s) — bascule sur mot de passe.", exc)
         self.login()
 
     @property
@@ -196,7 +330,15 @@ class PayByPhoneClient:
                 return str(claims[key])
         return None
 
-    # ------------------------------------------------------------------ base
+    def account_id(self) -> str:
+        """Identifiant du compte = l'identifiant membre porté par le jeton."""
+        self.authenticate()
+        member = self.member_id
+        if not member:
+            raise ApiError("Impossible de lire l'identifiant membre dans le jeton.")
+        return member
+
+    # --------------------------------------------------------------- GraphQL
 
     def _headers(self) -> dict:
         return {
@@ -206,106 +348,117 @@ class PayByPhoneClient:
             "Origin": WEB_ORIGIN,
             "Referer": f"{WEB_ORIGIN}/",
             "X-Pbp-ClientType": "WebApp",
-            "X-Pbp-Version": "2",
             "User-Agent": USER_AGENT,
         }
 
-    def _get_json(self, path: str, params: dict | None = None):
-        resp = self.http.get(path, headers=self._headers(), params=params)
-        if resp.status_code == 401:
-            # token périmé côté serveur : on force une reconnexion complète
-            self._access_token = None
-            self._expires_at = None
-            resp = self.http.get(path, headers=self._headers(), params=params)
+    def gql(self, query: str, variables: dict, field: str, retried: bool = False):
+        """Un appel GraphQL. Renvoie directement le contenu de `field`."""
+        resp = self.http.post(
+            GRAPHQL_PATH,
+            headers=self._headers(),
+            json={"query": query, "variables": variables},
+        )
+        if resp.status_code == 401 and not retried:
+            self._access_token = self._expires_at = None  # jeton périmé côté serveur
+            return self.gql(query, variables, field, retried=True)
         if not resp.ok:
-            raise ApiError(f"GET {path}", resp.status_code, resp.text)
-        return resp.json() if resp.content else None
+            raise ApiError(f"GraphQL {field}", resp.status_code, resp.text)
 
-    # -------------------------------------------------------------- comptes
+        payload = resp.json()
+        if payload.get("errors"):
+            raise ApiError(self._explain(field, payload["errors"]))
+        data = payload.get("data") or {}
+        if field not in data:
+            raise ApiError(f"Réponse GraphQL sans champ {field} : {json.dumps(payload)[:400]}")
+        return data[field]
 
-    def account_id(self) -> str:
-        if self._account_id:
-            return self._account_id
-        data = self._get_json("/parking/accounts")
-        accounts = data if isinstance(data, list) else data.get("accounts", [])
-        if not accounts:
-            raise ApiError("Aucun compte de stationnement sur ce login PayByPhone.")
-        self._account_id = str(accounts[0].get("id") or accounts[0].get("accountId"))
-        return self._account_id
+    def _explain(self, field: str, errors: list) -> str:
+        """Une erreur GraphQL est bavarde : on y ajoute la vraie forme attendue."""
+        messages = "; ".join(str(e.get("message", e)) for e in errors)
+        text = f"GraphQL {field} a répondu : {messages}"
 
-    def vehicles(self) -> list[Vehicle]:
-        data = self._get_json(f"/parking/accounts/{self.account_id()}/vehicles") or []
-        out = []
-        for item in data:
-            out.append(
-                Vehicle(
-                    id=str(item.get("id", "")),
-                    plate=str(item.get("licensePlate", "")).upper().replace(" ", ""),
-                    country=item.get("countryCode"),
-                    type=item.get("type") or item.get("vehicleType"),
-                    raw=item,
+        type_name = OPERATION_INPUTS.get(field)
+        looks_like_shape = any(
+            k in messages.lower()
+            for k in ("not defined", "unknown field", "required", "expected type", "argument")
+        )
+        if type_name and looks_like_shape:
+            try:
+                fields = self.input_fields(type_name)
+            except Exception:  # noqa: BLE001 — le diagnostic ne doit rien casser
+                fields = []
+            if fields:
+                text += (
+                    f"\n↳ champs réellement acceptés par {type_name} : "
+                    + ", ".join(f"{n} ({t})" for n, t in fields)
                 )
-            )
+        return text
+
+    def input_fields(self, type_name: str) -> list[tuple[str, str]]:
+        """Introspection : la forme exacte d'un type d'entrée, telle qu'elle est."""
+        data = self.gql(Q_INTROSPECT_INPUT, {"name": type_name}, "__type")
+        out = []
+        for item in (data or {}).get("inputFields") or []:
+            kind = item.get("type") or {}
+            name = kind.get("name") or (kind.get("ofType") or {}).get("name") or kind.get("kind")
+            out.append((item["name"], str(name)))
         return out
 
+    # ------------------------------------------------------------- véhicules
+
+    def vehicles(self) -> list[Vehicle]:
+        data = self.gql(Q_VEHICLES, {"input": {}}, "getVehiclesV3") or []
+        return [
+            Vehicle(
+                id=str(v.get("id", "")),
+                plate=str(v.get("licensePlate", "")).upper().replace(" ", ""),
+                country=v.get("countryCode"),
+                type=v.get("type"),
+                raw=v,
+            )
+            for v in data
+        ]
+
     def payment_account_id(self) -> str | None:
-        """Carte enregistrée. Inutile pour un tarif gratuit (CMI/PMR), requis sinon."""
-        member = self.member_id
-        candidates = []
-        if member:
-            candidates.append(f"/identity/profileservice/v1/members/{member}/paymentaccounts")
-        candidates.append("/payment/accounts")
-        if self._account_id:
-            candidates.append(f"/parking/accounts/{self._account_id}/paymentaccounts")
-        for path in candidates:
-            try:
-                data = self._get_json(path)
-            except ApiError:
-                continue
-            items = data if isinstance(data, list) else (data or {}).get("paymentAccounts", [])
-            for item in items or []:
-                pid = item.get("paymentAccountId") or item.get("id")
-                if pid:
-                    log.debug("Moyen de paiement trouvé via %s", path)
-                    return str(pid)
-        log.debug("Aucun moyen de paiement enregistré trouvé (normal si tarif gratuit).")
+        """Carte enregistrée. Inutile pour un tarif gratuit (CMI/PMR)."""
+        try:
+            data = self.gql(Q_PAYMENT_ACCOUNTS, {"input": {}}, "getPaymentAccountsV1") or []
+        except ApiError as exc:
+            log.debug("Moyens de paiement non listés : %s", exc)
+            return None
+        for item in data:
+            if item.get("paymentAccountId"):
+                return str(item["paymentAccountId"])
         return None
 
-    # ---------------------------------------------------------------- zones
-
-    def location(self, location_id: str) -> dict:
-        return self._get_json(f"/parking/locations/{location_id}") or {}
-
-    def search_location(self, advertised_number: str, country: str = "FR") -> list[dict]:
-        data = self._get_json(
-            "/parking/locations",
-            params={"advertisedLocationNumber": advertised_number, "countryCode": country},
-        )
-        return data if isinstance(data, list) else []
+    # ----------------------------------------------------------------- zones
 
     def rate_options(
         self, location_id: str, plate: str | None = None, start: datetime | None = None
     ) -> list[RateOption]:
-        params: dict = {"parkingAccountId": self.account_id()}
+        variables = {"input": {"locationId": str(location_id)}}
         if plate:
-            params["licensePlate"] = plate
-        if start:
-            params["startTime"] = start.isoformat().replace("+00:00", "Z")
-        data = self._get_json(f"/parking/locations/{location_id}/rateOptions", params=params) or []
+            variables["input"]["licensePlate"] = plate
+        if self.country:
+            variables["input"]["countryCode"] = self.country
+
+        data = self.gql(Q_RATE_OPTIONS, variables, "getRateOptionsV1") or []
         out = []
         for item in data:
-            max_stay = item.get("maxStayDuration") or {}
-            qty = max_stay.get("quantity")
-            unit = str(max_stay.get("durationType", "")).lower()
+            max_stay = item.get("effectiveMaxStayDuration") or {}
+            qty, unit = max_stay.get("quantity"), str(max_stay.get("timeUnit", "")).lower()
             minutes = None
             if isinstance(qty, (int, float)):
-                minutes = int(qty) * {"minute": 1, "hour": 60, "day": 1440}.get(unit, 1)
+                minutes = int(qty) * {
+                    "minute": 1, "minutes": 1, "hour": 60, "hours": 60,
+                    "day": 1440, "days": 1440,
+                }.get(unit, 1)
             out.append(
                 RateOption(
-                    id=str(item.get("rateOptionId", "")),
-                    name=item.get("name", ""),
-                    type=item.get("type") or item.get("eligibilityType"),
-                    is_default=bool(item.get("isDefault")),
+                    id=str(item.get("ratePolicyId", "")),
+                    name=item.get("name") or "",
+                    type=item.get("type"),
+                    is_default=False,
                     max_stay_minutes=minutes,
                     accepted_time_units=item.get("acceptedTimeUnits") or [],
                     raw=item,
@@ -313,9 +466,7 @@ class PayByPhoneClient:
             )
         return out
 
-    def pick_rate_option(
-        self, location_id: str, plate: str, wanted: str | None
-    ) -> RateOption:
+    def pick_rate_option(self, location_id: str, plate: str, wanted: str | None) -> RateOption:
         options = self.rate_options(location_id, plate)
         if not options:
             raise NotEligibleError(
@@ -331,12 +482,11 @@ class PayByPhoneClient:
                 f"Tarif « {wanted} » indisponible zone {location_id} pour {plate}.\n"
                 f"Tarifs proposés : {listing}"
             )
-        for opt in options:
-            if opt.is_default:
-                return opt
+        # getRateOptionsV1 ne marque aucun tarif comme « par défaut » :
+        # sans `rate:` explicite, on prend le premier proposé par la zone.
         return options[0]
 
-    # --------------------------------------------------------------- devis
+    # ----------------------------------------------------------------- devis
 
     def quote(
         self,
@@ -346,78 +496,102 @@ class PayByPhoneClient:
         rate_option_id: str | None = None,
         stall: str | None = None,
         session_id: str | None = None,
+        operation: str = "Start",
+        payment_account_id: str | None = None,
     ) -> Quote:
-        params = {
+        """createQuotesV1 — un prix **et** un quoteId, indispensable pour l'achat."""
+        details: dict = {
+            "locationId": str(location_id),
+            "advertisedLocationId": str(location_id),
+            "ratePolicyId": str(rate_option_id or ""),
+            "parkingQuoteOperation": operation,
             "durationTimeUnit": duration.unit,
             "durationQuantity": str(duration.quantity),
             "licensePlate": plate,
+            "stall": stall or "",
+            "parkingSessionId": session_id or "",
+            "paymentAccountId": payment_account_id or "",
+            "paymentCardType": "",
+            "paymentScope": "Private",
         }
-        if session_id:
-            params["parkingSessionId"] = session_id
-        else:
-            params["locationId"] = location_id
-        if rate_option_id:
-            params["rateOptionId"] = rate_option_id
-        if stall:
-            params["stall"] = stall
+        if operation == "Renew":
+            details["isRenewal"] = True
 
-        data = self._get_json(f"/parking/accounts/{self.account_id()}/quote", params=params) or {}
-        total = data.get("totalCost") or {}
+        request = {
+            "quoteRequestId": str(uuid.uuid4()),
+            "product": "PARKING",
+            "details": details,
+        }
+        data = self.gql(M_CREATE_QUOTES, {"requests": [request]}, "createQuotesV1") or {}
+        response = data.get("createQuotesResponse") or {}
+
+        errors = response.get("quoteErrors") or []
+        if errors:
+            reasons = "; ".join(
+                f"{e.get('status', '')} {e.get('reason', '')}".strip() for e in errors
+            )
+            raise NotEligibleError(f"Devis refusé zone {location_id} : {reasons}")
+
+        quotes = response.get("quotes") or []
+        if not quotes:
+            raise ApiError(f"Aucun devis renvoyé pour la zone {location_id}.")
+
+        first = quotes[0]
+        detail = first.get("details") or {}
+        cost = detail.get("totalCost") or {}
         return Quote(
-            cost=float(total.get("amount", 0) or 0),
-            currency=total.get("currency", "EUR"),
-            start=parse_dt(data.get("parkingStartTime")),
-            expiry=parse_dt(data.get("parkingExpiryTime")),
-            raw=data,
+            cost=float(cost.get("amount") or 0),
+            currency=cost.get("currency") or "EUR",
+            start=parse_dt(detail.get("parkingStartTime")),
+            expiry=parse_dt(detail.get("parkingExpiryTime")),
+            quote_id=first.get("quoteId"),
+            raw=first,
         )
 
-    # -------------------------------------------------------------- tickets
+    # --------------------------------------------------------------- tickets
+
+    def _to_session(self, item: dict) -> ParkingSession:
+        vehicle = item.get("vehicle") or {}
+        rate = item.get("ratePolicy") or {}
+        cost = item.get("totalCost") or {}
+        return ParkingSession(
+            id=str(item.get("parkingSessionId") or ""),
+            plate=str(vehicle.get("licensePlate") or "").upper().replace(" ", ""),
+            location_id=str(item.get("locationId") or ""),
+            start=parse_dt(item.get("startTime")),
+            expiry=parse_dt(item.get("expireTime")),
+            rate_option_id=str(rate["ratePolicyId"]) if rate.get("ratePolicyId") else None,
+            rate_type=rate.get("type"),
+            cost=float(cost["amount"]) if isinstance(cost.get("amount"), (int, float)) else None,
+            currency=cost.get("currency"),
+            raw=item,
+        )
 
     def current_sessions(self) -> list[ParkingSession]:
-        return self._sessions("Current")
+        data = self.gql(
+            Q_OPEN_SESSIONS, {"input": {"operatorAccessCodes": []}}, "getOpenSessionsV1"
+        ) or []
+        return [self._to_session(item) for item in data]
 
     def history(self, limit: int = 25) -> list[ParkingSession]:
-        """Tickets passés — sert de justificatif et de suivi de dépense."""
-        return self._sessions("Historic", limit=limit)
-
-    def _sessions(self, period: str, limit: int | None = None) -> list[ParkingSession]:
-        params: dict = {"periodType": period}
-        if limit:
-            params["limit"] = min(limit, 49)  # borne imposée par l'API
-        data = self._get_json(
-            f"/parking/accounts/{self.account_id()}/sessions", params=params
+        query = """
+query GetParkingSessionsV1($input: GetParkingSessionsInput!) {
+  getParkingSessionsV1(input: $input) {
+    parkingSessionId locationId startTime expireTime
+    vehicle { licensePlate }
+    ratePolicy { ratePolicyId type }
+    totalCost { amount currency }
+  }
+}
+"""
+        data = self.gql(
+            query, {"input": {"limit": min(limit, 49)}}, "getParkingSessionsV1"
         ) or []
-        if isinstance(data, dict):
-            data = data.get("sessions", data.get("items", []))
-        out = []
-        for item in data:
-            vehicle = item.get("vehicle") or {}
-            rate = item.get("rateOption") or {}
-            cost = (item.get("totalCost") or item.get("cost") or {})
-            out.append(
-                ParkingSession(
-                    id=str(item.get("parkingSessionId") or item.get("id") or ""),
-                    plate=str(vehicle.get("licensePlate") or item.get("licensePlate") or "")
-                    .upper()
-                    .replace(" ", ""),
-                    location_id=str(item.get("locationId") or ""),
-                    start=parse_dt(item.get("startTime")),
-                    expiry=parse_dt(item.get("expireTime") or item.get("expiryTime")
-                                    or item.get("endTime")),
-                    rate_option_id=str(rate.get("rateOptionId")) if rate.get("rateOptionId") else None,
-                    rate_type=rate.get("type") or rate.get("name"),
-                    cost=float(cost["amount"]) if isinstance(cost.get("amount"), (int, float)) else None,
-                    currency=cost.get("currency"),
-                    raw=item,
-                )
-            )
-        return out
+        return [self._to_session(item) for item in data]
 
-    def find_active(
-        self, plate: str, location_id: str | None = None, sessions: list[ParkingSession] | None = None
-    ) -> ParkingSession | None:
+    def find_active(self, plate, location_id=None, sessions=None):
         plate = plate.upper().replace(" ", "")
-        best: ParkingSession | None = None
+        best = None
         for sess in sessions if sessions is not None else self.current_sessions():
             if sess.plate != plate:
                 continue
@@ -425,9 +599,11 @@ class PayByPhoneClient:
                 continue
             if not sess.expiry or sess.expiry <= utcnow():
                 continue
-            if best is None or (sess.expiry > best.expiry):
+            if best is None or sess.expiry > best.expiry:
                 best = sess
         return best
+
+    # ----------------------------------------------------------------- achat
 
     def start_session(
         self,
@@ -440,128 +616,133 @@ class PayByPhoneClient:
         start_time: datetime | None = None,
         verify: bool = True,
     ) -> ParkingSession:
-        """Achète réellement un ticket, puis VÉRIFIE qu'il existe côté serveur."""
-        body: dict = {
-            "locationId": str(location_id),
-            "licensePlate": plate,
-            "rateOptionId": str(rate_option_id),
-            "duration": {"timeUnit": duration.unit, "quantity": str(duration.quantity)},
-        }
-        if stall:
-            body["stall"] = stall
-        if start_time:
-            body["startTime"] = start_time.isoformat().replace("+00:00", "Z")
-        if payment_account_id:
-            body["paymentMethod"] = {
-                "paymentMethodType": "PaymentAccount",
-                "payload": {"paymentAccountId": payment_account_id},
-            }
+        """Prend un ticket : devis → achat → vérification.
 
-        before = self.current_sessions() if verify else []
-        known_ids = {s.id for s in before}
+        Si une session renouvelable existe déjà sur cette plaque et cette zone,
+        on la renouvelle — c'est ce que prévoit l'API, et ça évite le refus
+        « session déjà active ».
+        """
+        plate = plate.upper().replace(" ", "")
+        before = self.current_sessions()
+        existing = self.find_active(plate, str(location_id), before)
 
-        log.info("Achat ticket : zone %s · %s · %s · tarif %s",
-                 location_id, plate, duration, rate_option_id)
-        resp = self.http.post(
-            f"/parking/accounts/{self.account_id()}/sessions",
-            headers=self._headers(),
-            json=body,
+        if existing and existing.raw.get("isRenewable"):
+            log.info("Session renouvelable trouvée (%s) — renouvellement.", existing.id)
+            return self.renew_session(existing, duration, rate_option_id,
+                                      payment_account_id, verify=verify)
+
+        quote = self.quote(
+            location_id, plate, duration, rate_option_id, stall,
+            payment_account_id=payment_account_id,
         )
-        if resp.status_code not in (200, 201, 202):
-            raise ApiError("Achat du ticket refusé", resp.status_code, resp.text)
+        log.info("Achat : zone %s · %s · %s · %.2f %s",
+                 location_id, plate, duration, quote.cost, quote.currency)
 
-        workflow = resp.headers.get("Location")
-        if workflow:
-            self._check_workflow(workflow)
-
+        result = self._mutate_session(M_START, "startParkingSessionV1", quote, plate)
         if not verify:
-            return ParkingSession(
-                id="", plate=plate, location_id=str(location_id), start=utcnow(),
-                expiry=utcnow() + timedelta(minutes=duration.minutes),
-            )
-        return self._wait_for_session(plate, str(location_id), known_ids)
+            return result
+        return self._verify(plate, str(location_id), {s.id for s in before}, result)
+
+    def renew_session(
+        self,
+        session: ParkingSession,
+        duration: Duration,
+        rate_option_id: str | None = None,
+        payment_account_id: str | None = None,
+        verify: bool = True,
+    ) -> ParkingSession:
+        quote = self.quote(
+            session.location_id,
+            session.plate,
+            duration,
+            rate_option_id or session.rate_option_id,
+            session_id=session.id,
+            operation="Renew",
+            payment_account_id=payment_account_id,
+        )
+        result = self._mutate_session(M_RENEW, "renewParkingSessionV1", quote, session.plate,
+                                      session_id=session.id)
+        if not verify:
+            return result
+        return self._verify(session.plate, session.location_id, set(), result,
+                            previous_expiry=session.expiry)
 
     def extend_session(
-        self,
-        session_id: str,
-        duration: Duration,
-        payment_account_id: str | None = None,
+        self, session_id: str, duration: Duration, payment_account_id: str | None = None
     ) -> None:
-        body: dict = {"duration": {"timeUnit": duration.unit, "quantity": str(duration.quantity)}}
-        if payment_account_id:
-            body["paymentMethod"] = {
-                "paymentMethodType": "PaymentAccount",
-                "payload": {"paymentAccountId": payment_account_id},
-            }
-        resp = self.http.put(
-            f"/parking/accounts/{self.account_id()}/sessions/{session_id}",
-            headers=self._headers(),
-            json=body,
+        current = next((s for s in self.current_sessions() if s.id == session_id), None)
+        if not current:
+            raise ApiError(f"Session {session_id} introuvable — impossible de prolonger.")
+        quote = self.quote(
+            current.location_id, current.plate, duration, current.rate_option_id,
+            session_id=session_id, operation="Extend",
+            payment_account_id=payment_account_id,
         )
-        if resp.status_code not in (200, 202, 204):
-            raise ApiError("Prolongation refusée", resp.status_code, resp.text)
-        workflow = resp.headers.get("Location")
-        if workflow:
-            self._check_workflow(workflow)
+        self._mutate_session(M_EXTEND, "extendParkingSessionV1", quote, current.plate,
+                             session_id=session_id)
 
-    def _check_workflow(self, url: str) -> None:
-        """L'achat est asynchrone : le workflow dit si ça a échoué et pourquoi."""
-        for _ in range(5):
-            try:
-                resp = self.http.get(url, headers=self._headers(), retry=False)
-            except ApiError:
-                return
-            if resp.status_code == 404:
-                time.sleep(1)
-                continue
-            if not resp.ok:
-                return
-            try:
-                data = resp.json()
-            except ValueError:
-                return
-            status = str(data.get("status") or data.get("$type") or "").lower()
-            log.debug("workflow → %s", data)
-            if "fail" in status or "error" in status or data.get("errors"):
-                raise ApiError(f"Achat refusé par PayByPhone : {json.dumps(data)[:500]}")
-            if "complete" in status or "created" in status or "success" in status:
-                return
-            time.sleep(1)
-
-    def _wait_for_session(
-        self, plate: str, location_id: str, known_ids: set[str], attempts: int = 10
+    def _mutate_session(
+        self, query: str, field: str, quote: Quote, plate: str, session_id: str | None = None
     ) -> ParkingSession:
-        plate = plate.upper().replace(" ", "")
+        """Achat/renouvellement à partir du quoteId, avec repli sur la forme d'entrée."""
+        if not quote.quote_id:
+            raise ApiError("Le devis n'a pas renvoyé de quoteId — achat impossible.")
+
+        base = {"quoteId": quote.quote_id, "plate": plate}
+        if session_id:
+            base["parkingSessionId"] = session_id
+
+        shapes = [base, {"request": base}, {"quoteId": quote.quote_id}]
+        last: ApiError | None = None
+        for shape in shapes:
+            try:
+                data = self.gql(query, {"input": shape}, field) or {}
+            except ApiError as exc:
+                last = exc
+                log.debug("forme d'entrée %s refusée : %s", list(shape), exc)
+                continue
+            response = data.get("parkingSessionResponse") or {}
+            cost = response.get("segmentTotalCost") or {}
+            return ParkingSession(
+                id=str(response.get("parkingSessionId") or ""),
+                plate=plate,
+                location_id="",
+                start=utcnow(),
+                expiry=parse_dt(response.get("expireTime")),
+                cost=float(cost["amount"]) if isinstance(cost.get("amount"), (int, float)) else None,
+                currency=cost.get("currency"),
+                raw=response,
+            )
+        raise last or ApiError(f"{field} : aucune forme d'entrée acceptée.")
+
+    def _verify(
+        self,
+        plate: str,
+        location_id: str,
+        known_ids: set[str],
+        claimed: ParkingSession,
+        previous_expiry: datetime | None = None,
+        attempts: int = 8,
+    ) -> ParkingSession:
+        """Le ticket n'est acquis que s'il est relu dans les sessions ouvertes."""
         for attempt in range(attempts):
             time.sleep(2 if attempt else 1)
             for sess in self.current_sessions():
                 if sess.plate != plate:
                     continue
-                if sess.location_id and str(sess.location_id) != location_id:
+                if location_id and sess.location_id and str(sess.location_id) != str(location_id):
                     continue
                 if not sess.expiry or sess.expiry <= utcnow():
                     continue
-                if sess.id and sess.id in known_ids:
-                    continue  # ticket déjà là avant l'achat : ce n'est pas le nôtre
-                log.info("Ticket confirmé ✅ %s", sess.describe())
-                return sess
+                if claimed.id and sess.id == claimed.id:
+                    if previous_expiry and sess.expiry <= previous_expiry:
+                        continue  # renouvellement pas encore pris en compte
+                    log.info("Ticket confirmé ✅ %s", sess.describe())
+                    return sess
+                if not claimed.id and sess.id not in known_ids:
+                    log.info("Ticket confirmé ✅ %s", sess.describe())
+                    return sess
         raise ApiError(
-            f"Ticket non confirmé : aucune session active pour {plate} zone {location_id} "
-            f"après {attempts} vérifications. L'achat n'a pas abouti."
+            f"Ticket non confirmé : rien d'actif pour {plate} zone {location_id} après "
+            f"{attempts} vérifications. L'achat n'a pas abouti."
         )
-
-    # ------------------------------------------------------------ diagnostic
-
-    def graphql_mutations(self) -> list[str]:
-        """Introspection GraphQL — utile si l'API REST change un jour."""
-        query = {
-            "query": "{ __schema { mutationType { fields { name } } } }",
-        }
-        resp = self.http.post(GRAPHQL_URL, headers=self._headers(), json=query)
-        if not resp.ok:
-            raise ApiError("Introspection GraphQL", resp.status_code, resp.text)
-        data = resp.json()
-        fields = (
-            data.get("data", {}).get("__schema", {}).get("mutationType", {}) or {}
-        ).get("fields") or []
-        return [f["name"] for f in fields]

@@ -41,7 +41,7 @@ def test_tarifs_et_selection(client):
     assert cmi.max_stay_minutes == 24 * 60
 
     par_defaut = client.pick_rate_option("75016", PLATE, None)
-    assert par_defaut.type == "VIS"
+    assert par_defaut.type == "CMI"  # sans `rate:`, le premier tarif de la zone
 
     par_nom = client.pick_rate_option("75016", PLATE, "mobilité")
     assert par_nom.type == "CMI"

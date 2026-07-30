@@ -101,9 +101,9 @@ def test_history(env, capsys, server):
 
 
 def test_zones(env, capsys):
-    assert main(env + ["zones", "750"]) == 0
-    out = capsys.readouterr().out
-    assert "75016" in out and "75008" in out
+    assert main(env + ["zones", "75016"]) == 0
+    assert "CMI" in capsys.readouterr().out
+    assert main(env + ["zones", "99999"]) == 1
 
 
 def test_web_est_bien_cable(env, monkeypatch):

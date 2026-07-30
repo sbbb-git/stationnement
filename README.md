@@ -72,20 +72,44 @@ ci-dessus. Dis-le moi si tu veux que je supprime carrément ces morceaux.
 
 ---
 
-## Ce qui bloquait avant
+## Pourquoi ça ne marchait pas
 
-L'ancien script appelait `createQuotesV1` et affichait `✅ Ticket OK`.
-Or **un devis n'achète rien** : c'est juste une estimation de prix. Le vrai
-enchaînement est :
+Deux causes, trouvées en sondant les endpoints et en lisant le bundle de
+l'application PayByPhone (une app Flutter : `main.dart.js` contient en clair
+les opérations GraphQL). Détail dans [docs/api-paybyphone.md](docs/api-paybyphone.md).
+
+**1. L'API REST n'existe plus.**
 
 ```
-token → tarifs de la zone → devis → ACHAT (POST .../sessions) → VÉRIFICATION
+GET consumer.paybyphoneapis.com/parking/accounts   →  404 page not found
+POST consumer.paybyphoneapis.com/uapi/graphql      →  401  (vivante)
+POST auth.paybyphoneapis.com/token                 →  400 invalid_grant (vivante)
 ```
 
-Il manquait les deux dernières étapes. Ici, un ticket n'est déclaré pris que
-lorsqu'il a été **relu depuis le serveur** dans la liste des sessions actives.
-Sinon c'est une erreur, et une notification part. (Test de non-régression :
-`test_achat_fantome_remonte_en_echec`.)
+Tout passe par **GraphQL**. Une implémentation basée sur la doc REST
+reverse-engineerée de 2015 ne pouvait pas marcher, quels que soient les
+identifiants.
+
+**2. Il manquait la mutation d'achat.**
+
+L'ancien script s'arrêtait à `createQuotesV1` et affichait `✅ Ticket OK`. Or un
+devis n'achète rien. Le vrai enchaînement, celui de l'application :
+
+```
+createQuotesV1         →  un devis, et surtout un quoteId
+startParkingSessionV1  →  l'achat, à partir de ce quoteId
+getOpenSessionsV1      →  vérification que le ticket existe vraiment
+```
+
+C'est maintenant ce que fait le programme, et un ticket n'est déclaré pris que
+lorsqu'il a été **relu depuis le serveur**. Sinon c'est une erreur, et une
+notification part. (Test de non-régression : `test_achat_fantome_remonte_en_echec`.)
+
+**Le renouvellement, en bonus.** Chaque session renvoyée par l'API porte
+`isRenewable` et `renewableAfter` : elle dit elle-même quand elle peut être
+reprise. Quand une session en cours est renouvelable, on passe par
+`renewParkingSessionV1` au lieu d'en empiler une seconde — c'est le mécanisme
+prévu, et il évite le refus « session déjà active ».
 
 ---
 
@@ -152,6 +176,7 @@ python -m allovalet quote --zone 75016 --duration 2h
 python -m allovalet plan  --zone 75008 --until 19:00   # simulation SmartPark
 python -m allovalet park  --zone 75016 --duration 24h  # ticket manuel
 python -m allovalet history                       # tickets passés et dépense
+python -m allovalet schema                        # forme exacte attendue par l'API
 python -m allovalet easypark-login                # auth EasyPark par SMS
 ```
 
@@ -292,9 +317,10 @@ pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
 
-66 tests, sans réseau : un faux serveur PayByPhone rejoue le flux complet
-(connexion, tarifs, devis, achat, vérification, prolongation, doublon refusé,
-achat fantôme), les commandes, les routes du tableau de bord, plus les tests
+80 tests, sans réseau : un faux serveur **GraphQL** rejoue le moteur réel
+(connexion, jeton périmé, tarifs, devis, achat via quoteId, renouvellement,
+prolongation, vérification, achat fantôme, introspection), les commandes, les
+routes du tableau de bord, l'horaire réellement configuré, plus les tests
 unitaires du découpage SmartPark — dont une vérification de l'optimum par
 force brute.
 
@@ -305,12 +331,17 @@ clair et sombre : `docs/dashboard.png` et `docs/dashboard-dark.png`.
 
 ## Limites, dites franchement
 
-- Les API PayByPhone et EasyPark ne sont pas publiques : si elles changent, il
-  faudra ajuster. `doctor` sert justement à détecter ça avant que ça coûte un PV.
 - **Le code n'a pas encore tourné contre un vrai compte** — je n'ai pas les
-  identifiants. Tout est validé contre un serveur factice fidèle au flux
-  documenté. Premier vrai test à faire : `doctor`, puis `run --dry-run`, puis un
-  `park` manuel.
+  identifiants. Les endpoints, eux, ont été sondés en direct et le moteur est
+  calqué sur celui de l'application. Premier vrai test : `doctor`, puis
+  `run --dry-run`.
+- Il reste un point non vérifiable sans compte : la forme exacte de l'entrée de
+  `startParkingSessionV1`. Le client essaie les formes plausibles l'une après
+  l'autre, et en cas de refus l'erreur contient **la liste des champs réellement
+  acceptés**, obtenue par introspection. `allovalet schema` la donne aussi
+  directement. Si ça coince, c'est une correction d'une ligne.
+- L'API n'est pas publique : si elle change, `doctor` le détectera avant que ça
+  coûte un PV.
 - EasyPark est en secondaire : sa connexion passe par un code SMS (non
   automatisable) et l'endpoint qui liste les tickets en cours est essayé parmi
   plusieurs candidats. PayByPhone est le chemin fiable.

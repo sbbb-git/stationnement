@@ -1,71 +1,79 @@
-"""Faux serveur PayByPhone : rejoue le vrai flux d'API en local.
+"""Faux PayByPhone GraphQL — rejoue le moteur réel en local.
 
-Il sert à valider la chaîne complète (connexion → tarifs → devis → achat →
-vérification → SmartPark) sans toucher au vrai service ni à un vrai compte.
+Les opérations, les types d'entrée et les champs de réponse sont ceux relevés
+dans le bundle Flutter de l'application (`main.dart.js`) :
+createQuotesV1 → startParkingSessionV1 / renewParkingSessionV1 → getOpenSessionsV1.
 
-Barème imité de la voirie parisienne (zone 1) : volontairement progressif,
-c'est ce qui rend SmartPark intéressant.
+Barème imité de la voirie parisienne (zone 1), volontairement progressif.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-ACCOUNT_ID = "d6d1817e-98ee-4600-b82b-f1aace2abea5"
+MEMBER_ID = "d6d1817e-98ee-4600-b82b-f1aace2abea5"
 PLATE = "AB123CD"
 
-# Prix cumulé (€) pour une durée continue, tarif visiteur.
+CMI_POLICY = "1085252721"
+
 PROGRESSIVE = {60: 6.0, 120: 12.0, 180: 32.5, 240: 52.5, 300: 63.75, 360: 75.0}
 
 RATE_OPTIONS = {
     "75016": [
-        {"name": "Carte Mobilité Inclusion", "type": "CMI", "rateOptionId": "1085252721",
-         "maxStayDuration": {"durationType": "Hour", "quantity": 24},
-         "acceptedTimeUnits": ["Hours", "Days"], "isDefault": False},
-        {"name": "Visiteur", "type": "VIS", "rateOptionId": "75016",
-         "maxStayDuration": {"durationType": "Minute", "quantity": 360},
-         "acceptedTimeUnits": ["Minutes", "Hours"], "isDefault": True},
+        {"name": "Carte Mobilité Inclusion", "type": "CMI", "ratePolicyId": CMI_POLICY,
+         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Hours", "Days"],
+         "effectiveMaxStayDuration": {"quantity": 24, "timeUnit": "Hours"}},
+        {"name": "Visiteur", "type": "VIS", "ratePolicyId": "75016",
+         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
+         "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
     ],
     "75008": [
-        {"name": "Visiteur", "type": "VIS", "rateOptionId": "75008",
-         "maxStayDuration": {"durationType": "Minute", "quantity": 360},
-         "acceptedTimeUnits": ["Minutes", "Hours"], "isDefault": True},
+        {"name": "Visiteur", "type": "VIS", "ratePolicyId": "75008",
+         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
+         "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
     ],
 }
 
 UNIT_MINUTES = {"minutes": 1, "hours": 60, "days": 1440}
 
+INPUT_FIELDS = {
+    "StartParkingSessionV1Input": ["quoteId", "plate"],
+    "RenewParkingSessionV1Input": ["quoteId", "plate", "parkingSessionId"],
+}
 
-def price(rate_option_id: str, minutes: int) -> float:
+
+def price(rate_policy_id: str, minutes: int) -> float:
     """0 € pour la CMI ; barème progressif interpolé sinon."""
-    if rate_option_id == "1085252721":
+    if rate_policy_id == CMI_POLICY:
         return 0.0
     steps = sorted(PROGRESSIVE)
     if minutes <= steps[0]:
         return round(PROGRESSIVE[steps[0]] * minutes / steps[0], 2)
     for low, high in zip(steps, steps[1:]):
         if minutes <= high:
-            span = high - low
-            ratio = (minutes - low) / span
+            ratio = (minutes - low) / (high - low)
             return round(PROGRESSIVE[low] + ratio * (PROGRESSIVE[high] - PROGRESSIVE[low]), 2)
     last = steps[-1]
     return round(PROGRESSIVE[last] * minutes / last, 2)
 
 
 class FakePayByPhone:
-    """Serveur jetable. `sessions` est l'état de vérité, comme chez PayByPhone."""
-
     def __init__(self):
         self.sessions: list[dict] = []
+        self.quotes: dict[str, dict] = {}
         self.purchases: list[dict] = []
-        self.swallow_purchases = False  # simule un achat qui "réussit" sans ticket
-        self.reject_duplicate = False   # simule une zone qui refuse un 2e ticket
+        self.operations: list[str] = []
+        self.swallow_purchases = False   # « acheté » mais aucune session créée
+        self.reject_duplicate = False    # zone refusant une 2e session
+        self.require_request_wrapper = False  # variante input: {request: {...}}
         self.token_calls: list[dict] = []
+        self.issued_tokens: set[str] = set()  # un jeton inconnu = 401, comme en vrai
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(self))
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -77,17 +85,38 @@ class FakePayByPhone:
         self._server.shutdown()
         self._server.server_close()
 
-    # -- helpers de test ------------------------------------------------
+    # ------------------------------------------------------ aides de test
+
     def add_session(self, minutes: int, plate: str = PLATE, location: str = "75016",
-                    rate_option_id: str = "1085252721") -> dict:
+                    rate_policy_id: str = CMI_POLICY, renewable: bool = True) -> dict:
         now = datetime.now(timezone.utc)
         session = {
             "parkingSessionId": str(uuid.uuid4()),
             "locationId": location,
-            "vehicle": {"licensePlate": plate, "countryCode": "FR"},
             "startTime": _iso(now),
             "expireTime": _iso(now + timedelta(minutes=minutes)),
-            "rateOption": {"rateOptionId": rate_option_id, "type": "CMI"},
+            "stall": None,
+            "isRenewable": renewable,
+            "renewableAfter": _iso(now),
+            "isExtendable": True,
+            "vehicle": {"licensePlate": plate, "countryCode": "FR"},
+            "ratePolicy": {"ratePolicyId": rate_policy_id, "type": "CMI"},
+        }
+        self.sessions.append(session)
+        return session
+
+    def add_past_session(self, hours_ago: int = 24, cost: float = 6.0,
+                         plate: str = PLATE, location: str = "75016") -> dict:
+        end = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        session = {
+            "parkingSessionId": str(uuid.uuid4()),
+            "locationId": location,
+            "startTime": _iso(end - timedelta(hours=1)),
+            "expireTime": _iso(end),
+            "isRenewable": False,
+            "vehicle": {"licensePlate": plate, "countryCode": "FR"},
+            "ratePolicy": {"ratePolicyId": "75016", "type": "VIS"},
+            "totalCost": {"amount": cost, "currency": "EUR"},
         }
         self.sessions.append(session)
         return session
@@ -99,21 +128,6 @@ class FakePayByPhone:
     def past(self) -> list[dict]:
         now = datetime.now(timezone.utc)
         return [s for s in self.sessions if _parse(s["expireTime"]) <= now]
-
-    def add_past_session(self, hours_ago: int = 24, cost: float = 6.0,
-                         plate: str = PLATE, location: str = "75016") -> dict:
-        end = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-        session = {
-            "parkingSessionId": str(uuid.uuid4()),
-            "locationId": location,
-            "vehicle": {"licensePlate": plate, "countryCode": "FR"},
-            "startTime": _iso(end - timedelta(hours=1)),
-            "expireTime": _iso(end),
-            "rateOption": {"rateOptionId": "75016", "type": "VIS"},
-            "totalCost": {"amount": cost, "currency": "EUR"},
-        }
-        self.sessions.append(session)
-        return session
 
 
 def _iso(moment: datetime) -> str:
@@ -128,19 +142,23 @@ def _make_handler(state: FakePayByPhone):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, *args):  # silence
+        def log_message(self, *args):
             pass
 
         # ------------------------------------------------------------ utils
-        def _json(self, payload, status: int = 200, headers: dict | None = None):
+        def _json(self, payload, status: int = 200):
             body = json.dumps(payload).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            for key, value in (headers or {}).items():
-                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
+
+        def _data(self, field, value):
+            return self._json({"data": {field: value}})
+
+        def _error(self, message):
+            return self._json({"errors": [{"message": message}]})
 
         def _body(self) -> dict:
             length = int(self.headers.get("Content-Length", 0))
@@ -151,163 +169,233 @@ def _make_handler(state: FakePayByPhone):
                 return json.loads(raw)
             return {k: v[0] for k, v in parse_qs(raw).items()}
 
-        def _authorized(self) -> bool:
-            return self.headers.get("Authorization", "").startswith("Bearer ")
-
-        # -------------------------------------------------------------- GET
-        def do_GET(self):  # noqa: N802
-            url = urlparse(self.path)
-            path = url.path
-            query = {k: v[0] for k, v in parse_qs(url.query).items()}
-
-            if not self._authorized():
-                return self._json({"error": "unauthorized"}, 401)
-
-            if path == "/parking/accounts":
-                return self._json([{"id": ACCOUNT_ID}])
-
-            if path == f"/parking/accounts/{ACCOUNT_ID}/vehicles":
-                return self._json([{"id": "1", "licensePlate": PLATE,
-                                    "countryCode": "FR", "type": "car"}])
-
-            if path.startswith("/parking/locations/") and path.endswith("/rateOptions"):
-                location = path.split("/")[3]
-                return self._json(RATE_OPTIONS.get(location, []))
-
-            if path == f"/parking/accounts/{ACCOUNT_ID}/quote":
-                return self._quote(query)
-
-            if path == f"/parking/accounts/{ACCOUNT_ID}/sessions":
-                if query.get("periodType") == "Historic":
-                    return self._json(state.past()[: int(query.get("limit", 25))])
-                return self._json(state.active())
-
-            if path == "/parking/locations":
-                number = query.get("advertisedLocationNumber", "")
-                return self._json([
-                    {"locationId": zone, "name": f"Paris {zone}", "countryCode": "FR",
-                     "status": "lotOpen"}
-                    for zone in RATE_OPTIONS if number in zone
-                ])
-
-            if path.startswith("/events/workflow/"):
-                return self._json({"status": "Completed"})
-
-            if path == "/payment/accounts":
-                return self._json([{"paymentAccountId": "pay-123"}])
-
-            return self._json({"error": "not found", "path": path}, 404)
-
-        def _quote(self, query):
-            unit = query.get("durationTimeUnit", "Hours").lower()
-            quantity = int(query.get("durationQuantity", 1))
-            minutes = quantity * UNIT_MINUTES.get(unit, 60)
-            rate = query.get("rateOptionId", "75016")
-            now = datetime.now(timezone.utc)
-            return self._json({
-                "locationId": query.get("locationId", "75016"),
-                "quoteDate": _iso(now),
-                "totalCost": {"amount": price(rate, minutes), "currency": "EUR"},
-                "parkingStartTime": _iso(now),
-                "parkingExpiryTime": _iso(now + timedelta(minutes=minutes)),
-                "licensePlate": query.get("licensePlate", PLATE),
-            })
-
         # ------------------------------------------------------------- POST
         def do_POST(self):  # noqa: N802
-            url = urlparse(self.path)
-            path = url.path
-
+            path = urlparse(self.path).path
             if path == "/token":
-                body = self._body()
-                state.token_calls.append(body)
-                if body.get("grant_type") == "password":
-                    if not (body.get("username") and body.get("password")):
-                        return self._json({"error": "invalid_grant"}, 400)
-                elif body.get("grant_type") == "refresh_token":
-                    if body.get("refresh_token") != "valid-refresh":
-                        return self._json({"error": "invalid_grant"}, 400)
-                return self._json({
-                    "access_token": _fake_jwt(),
-                    "refresh_token": "valid-refresh",
-                    "token_type": "bearer",
-                    "expires_in": 3600,
-                })
+                return self._token()
+            if path != "/uapi/graphql":
+                return self._json({"error": "not found"}, 404)
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if token not in state.issued_tokens:
+                return self._json({"errors": [{"message": "unauthorized"}]}, 401)
+            return self._graphql()
 
-            if not self._authorized():
-                return self._json({"error": "unauthorized"}, 401)
+        def do_GET(self):  # noqa: N802
+            return self._json({"error": "not found"}, 404)
 
-            if path == f"/parking/accounts/{ACCOUNT_ID}/sessions":
-                return self._start_session()
-
-            return self._json({"error": "not found", "path": path}, 404)
-
-        def _start_session(self):
+        def _token(self):
             body = self._body()
-            state.purchases.append(body)
+            state.token_calls.append(body)
+            grant = body.get("grant_type")
+            if grant == "password" and not (body.get("username") and body.get("password")):
+                return self._json({"error": "invalid_grant"}, 400)
+            if grant == "refresh_token" and body.get("refresh_token") != "valid-refresh":
+                return self._json(
+                    {"error": "invalid_grant", "error_description": "expired"}, 400
+                )
+            token = _fake_jwt()
+            state.issued_tokens.add(token)
+            return self._json({
+                "access_token": token,
+                "refresh_token": "valid-refresh",
+                "token_type": "bearer",
+                "expires_in": 3600,
+            })
 
-            plate = body.get("licensePlate", "").upper()
-            location = str(body.get("locationId"))
-            duration = body.get("duration") or {}
-            minutes = int(duration.get("quantity", 1)) * UNIT_MINUTES.get(
-                str(duration.get("timeUnit", "Hours")).lower(), 60
-            )
+        # ---------------------------------------------------------- GraphQL
+        def _graphql(self):
+            body = self._body()
+            query = body.get("query", "")
+            variables = body.get("variables") or {}
+            field = _operation_field(query)
+            state.operations.append(field)
+
+            handler = {
+                "__type": self._introspect,
+                "getVehiclesV3": self._vehicles,
+                "getPaymentAccountsV1": self._payment_accounts,
+                "getRateOptionsV1": self._rate_options,
+                "getOpenSessionsV1": self._open_sessions,
+                "getParkingSessionsV1": self._past_sessions,
+                "createQuotesV1": self._create_quotes,
+                "startParkingSessionV1": self._start,
+                "renewParkingSessionV1": self._renew,
+                "extendParkingSessionV1": self._extend,
+            }.get(field)
+            if not handler:
+                return self._error(f"Cannot query field \"{field}\"")
+            return handler(variables)
+
+        def _introspect(self, variables):
+            name = variables.get("name", "")
+            fields = INPUT_FIELDS.get(name)
+            if fields is None:
+                return self._data("__type", None)
+            return self._data("__type", {
+                "name": name,
+                "inputFields": [
+                    {"name": f, "type": {"name": "String", "kind": "SCALAR", "ofType": None}}
+                    for f in fields
+                ],
+            })
+
+        def _vehicles(self, variables):
+            return self._data("getVehiclesV3", [
+                {"id": "1", "licensePlate": PLATE, "countryCode": "FR",
+                 "type": "car", "jurisdiction": None}
+            ])
+
+        def _payment_accounts(self, variables):
+            return self._data("getPaymentAccountsV1", [{"paymentAccountId": "pay-123"}])
+
+        def _rate_options(self, variables):
+            location = str((variables.get("input") or {}).get("locationId", ""))
+            return self._data("getRateOptionsV1", RATE_OPTIONS.get(location, []))
+
+        def _open_sessions(self, variables):
+            return self._data("getOpenSessionsV1", state.active())
+
+        def _past_sessions(self, variables):
+            limit = int((variables.get("input") or {}).get("limit", 25))
+            return self._data("getParkingSessionsV1", state.past()[:limit])
+
+        def _create_quotes(self, variables):
+            request = (variables.get("requests") or [{}])[0]
+            details = request.get("details") or {}
+            unit = str(details.get("durationTimeUnit", "Hours")).lower()
+            minutes = int(details.get("durationQuantity", 1)) * UNIT_MINUTES.get(unit, 60)
+            policy = str(details.get("ratePolicyId") or "")
+            location = str(details.get("locationId") or "")
+
+            if location not in RATE_OPTIONS:
+                return self._data("createQuotesV1", {"createQuotesResponse": {
+                    "quotes": [],
+                    "quoteErrors": [{"quoteRequestId": request.get("quoteRequestId"),
+                                     "status": "Rejected", "reason": "UnknownLocation"}],
+                }})
+
+            quote_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc)
+            state.quotes[quote_id] = {
+                "minutes": minutes, "policy": policy, "location": location,
+                "plate": details.get("licensePlate", PLATE),
+                "operation": details.get("parkingQuoteOperation", "Start"),
+                "sessionId": details.get("parkingSessionId") or "",
+            }
+            return self._data("createQuotesV1", {"createQuotesResponse": {
+                "quotes": [{
+                    "quoteId": quote_id,
+                    "details": {
+                        "locationId": location,
+                        "parkingStartTime": _iso(now),
+                        "parkingExpiryTime": _iso(now + timedelta(minutes=minutes)),
+                        "totalCost": {"amount": price(policy, minutes), "currency": "EUR"},
+                    },
+                }],
+                "quoteErrors": [],
+            }})
+
+        def _quote_of(self, variables):
+            payload = variables.get("input") or {}
+            if state.require_request_wrapper and "request" not in payload:
+                return None, None
+            if "request" in payload:  # forme alternative
+                payload = payload["request"]
+            return payload, state.quotes.get(str(payload.get("quoteId", "")))
+
+        def _start(self, variables):
+            payload, quote = self._quote_of(variables)
+            if not quote:
+                return self._error(
+                    'Field "request" of required type "StartParkingRequest!" '
+                    "was not provided."
+                )
+            state.purchases.append({**payload, **quote})
 
             if state.reject_duplicate and any(
-                s["vehicle"]["licensePlate"] == plate and s["locationId"] == location
+                s["vehicle"]["licensePlate"] == quote["plate"]
+                and s["locationId"] == quote["location"]
                 for s in state.active()
             ):
-                return self._json(
-                    {"error": "An active session already exists for this vehicle"}, 409
-                )
-
-            workflow = f"http://127.0.0.1:{self.server.server_address[1]}/events/workflow/{uuid.uuid4()}"
+                return self._error("An active session already exists for this vehicle")
 
             if state.swallow_purchases:
-                # Le cas piégeux : 202 renvoyé, mais aucun ticket créé.
-                return self._json({"accepted": True}, 202, {"Location": workflow})
+                return self._data("startParkingSessionV1", {"parkingSessionResponse": {
+                    "parkingSessionId": str(uuid.uuid4()),
+                    "expireTime": _iso(datetime.now(timezone.utc)
+                                       + timedelta(minutes=quote["minutes"])),
+                    "segmentTotalCost": {"amount": 0.0, "currency": "EUR"},
+                }})
 
-            now = datetime.now(timezone.utc)
-            state.sessions.append({
-                "parkingSessionId": str(uuid.uuid4()),
-                "locationId": location,
-                "vehicle": {"licensePlate": plate, "countryCode": "FR"},
-                "startTime": _iso(now),
-                "expireTime": _iso(now + timedelta(minutes=minutes)),
-                "rateOption": {"rateOptionId": str(body.get("rateOptionId")), "type": "VIS"},
-                "totalCost": {"amount": price(str(body.get("rateOptionId")), minutes),
-                              "currency": "EUR"},
-            })
-            return self._json({"accepted": True}, 202, {"Location": workflow})
-
-        # -------------------------------------------------------------- PUT
-        def do_PUT(self):  # noqa: N802
-            url = urlparse(self.path)
-            prefix = f"/parking/accounts/{ACCOUNT_ID}/sessions/"
-            if not url.path.startswith(prefix):
-                return self._json({"error": "not found"}, 404)
-            session_id = url.path[len(prefix):]
-            body = self._body()
-            duration = body.get("duration") or {}
-            minutes = int(duration.get("quantity", 1)) * UNIT_MINUTES.get(
-                str(duration.get("timeUnit", "Hours")).lower(), 60
+            session = state.add_session(
+                minutes=quote["minutes"], plate=quote["plate"],
+                location=quote["location"], rate_policy_id=quote["policy"],
             )
-            for session in state.sessions:
-                if session["parkingSessionId"] == session_id:
-                    session["expireTime"] = _iso(
-                        _parse(session["expireTime"]) + timedelta(minutes=minutes)
-                    )
-                    return self._json({"accepted": True}, 202)
-            return self._json({"error": "unknown session"}, 404)
+            return self._data("startParkingSessionV1", {"parkingSessionResponse": {
+                "parkingSessionId": session["parkingSessionId"],
+                "expireTime": session["expireTime"],
+                "segmentTotalCost": {
+                    "amount": price(quote["policy"], quote["minutes"]), "currency": "EUR"},
+            }})
+
+        def _renew(self, variables):
+            payload, quote = self._quote_of(variables)
+            if not quote:
+                return self._error('Field "quoteId" was not provided.')
+            state.purchases.append({**payload, **quote})
+
+            target = next(
+                (s for s in state.active()
+                 if s["parkingSessionId"] == (quote["sessionId"] or payload.get("parkingSessionId"))),
+                None,
+            )
+            if not target:
+                return self._error("Session not found or not renewable")
+            if state.swallow_purchases:
+                return self._data("renewParkingSessionV1", {"parkingSessionResponse": {
+                    "parkingSessionId": target["parkingSessionId"],
+                    "expireTime": target["expireTime"],
+                }})
+            target["expireTime"] = _iso(
+                datetime.now(timezone.utc) + timedelta(minutes=quote["minutes"])
+            )
+            return self._data("renewParkingSessionV1", {"parkingSessionResponse": {
+                "parkingSessionId": target["parkingSessionId"],
+                "expireTime": target["expireTime"],
+                "segmentTotalCost": {
+                    "amount": price(quote["policy"], quote["minutes"]), "currency": "EUR"},
+            }})
+
+        def _extend(self, variables):
+            payload, quote = self._quote_of(variables)
+            if not quote:
+                return self._error('Field "quoteId" was not provided.')
+            target = next((s for s in state.active()
+                           if s["parkingSessionId"] == quote["sessionId"]), None)
+            if not target:
+                return self._error("Session not found")
+            target["expireTime"] = _iso(
+                _parse(target["expireTime"]) + timedelta(minutes=quote["minutes"])
+            )
+            return self._data("extendParkingSessionV1", {"parkingSessionResponse": {
+                "parkingSessionId": target["parkingSessionId"],
+                "expireTime": target["expireTime"],
+            }})
 
     return Handler
+
+
+def _operation_field(query: str) -> str:
+    """Nom du champ racine demandé — c'est ce qui identifie l'opération."""
+    match = re.search(r"\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*[({]", query)
+    return match.group(1) if match else ""
 
 
 def _fake_jwt() -> str:
     import base64
 
     def part(payload: dict) -> str:
-        raw = json.dumps(payload).encode()
-        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
 
-    return f"{part({'alg': 'none'})}.{part({'sub': 'member-1'})}.signature"
+    return f"{part({'alg': 'none'})}.{part({'sub': MEMBER_ID})}.signature"

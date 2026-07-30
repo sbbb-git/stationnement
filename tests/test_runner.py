@@ -40,12 +40,16 @@ def test_prend_le_ticket_puis_ne_le_reprend_pas(tmp_path, client, state, server)
 
 
 def test_renouvelle_quand_le_ticket_expire(tmp_path, client, state, server):
-    server.add_session(minutes=10)  # moins que la marge de 20 min
+    """L'API dit `isRenewable` : on renouvelle la session, on n'en empile pas une 2e."""
+    session = server.add_session(minutes=10)  # moins que la marge de 20 min
     runner = build(tmp_path, client, state)
 
     report = runner.tick()
     assert [r.status for r in report.results] == [PURCHASED]
-    assert len(server.active()) == 2
+    assert len(server.active()) == 1
+    assert server.sessions[0]["parkingSessionId"] == session["parkingSessionId"]
+    assert report.results[0].session.remaining > timedelta(hours=20)
+    assert "renewParkingSessionV1" in server.operations
 
 
 def test_hors_creneau_ne_fait_rien(tmp_path, client, state, server):
@@ -109,11 +113,7 @@ rules:
     report = runner.tick()
 
     assert report.results[0].status == PURCHASED
-    achat = server.purchases[0]
-    minutes = int(achat["duration"]["quantity"]) * (
-        60 if achat["duration"]["timeUnit"] == "Hours" else 1
-    )
-    assert minutes <= 120  # jamais le bloc de 6 h à 75 €
+    assert server.purchases[0]["minutes"] <= 120  # jamais le bloc de 6 h à 75 €
     assert report.results[0].cost <= 12.0
     assert "SmartPark" in report.results[0].message
 
