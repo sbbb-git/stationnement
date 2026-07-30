@@ -5,6 +5,35 @@ Stationnement automatique pour **mes propres véhicules**, sur le modèle de
 par des règles, les tickets se renouvellent tout seuls, et les longues durées
 sont découpées pour payer moins cher.
 
+## Mise en route — 3 étapes
+
+**1. Fusionner cette branche dans `main`.**
+GitHub ne déclenche les tâches planifiées **que depuis la branche par défaut**.
+Tant que le code reste sur `claude/allovalet-personal-inspiration-5fnet9`, le
+cron ne partira jamais.
+
+**2. Ajouter 2 secrets.**
+Repo → *Settings* → *Secrets and variables* → *Actions* → *New repository secret* :
+
+| Nom | Valeur |
+|---|---|
+| `PBP_USERNAME` | ton numéro PayByPhone avec l'indicatif (`+336…`) ou ton email |
+| `PBP_PASSWORD` | ton mot de passe PayByPhone |
+
+**3. Un essai à blanc, puis c'est fini.**
+Onglet *Actions* → *Stationnement automatique* → *Run workflow*, coche
+**Simuler**. Le log dit ce qu'il ferait sans rien acheter :
+
+- `🧪 [16e — CMI 24 h] achèterait : zone 75016 · CMI · 1 Days · 0.00 €` → c'est bon,
+  décoche Simuler et relance une fois pour prendre le premier vrai ticket.
+- `⛔ Tarif « CMI » indisponible … Tarifs proposés : …` → le libellé exact de ton
+  tarif est dans le message. Corrige `rate:` dans `config.yml`, commite, relance.
+
+Ensuite ça tourne tout seul toutes les 30 minutes, y compris si un passage
+échoue : le suivant rattrape.
+
+---
+
 | AlloValet | Ici |
 |---|---|
 | Connexion au compte PayByPhone | idem (EasyPark aussi, en secondaire) |

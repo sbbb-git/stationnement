@@ -2,9 +2,8 @@
 # à chaque passage, aucun redéploiement n'est nécessaire.
 #
 # Avant la première mise en route :
-#   python -m allovalet doctor            → vérifie toute la chaîne
-#   python -m allovalet rates --zone 75016 → affiche les vrais codes tarifaires
-#   python -m allovalet run --dry-run     → dit ce qu'il ferait sans rien acheter
+#   Onglet Actions → « Stationnement automatique » → Run workflow, case Simuler
+#   → le log dit exactement ce qu'il ferait, sans rien acheter.
 
 provider: paybyphone          # bascule sur `easypark` si le compte est chez eux
 timezone: Europe/Paris
@@ -40,21 +39,3 @@ rules:
       from: "17:00"           # donc une fenêtre large évite tout trou de couverture
       to: "23:59"
     max_cost_per_ticket: 0
-
-  # Exemple SmartPark, désactivé par défaut : découpe une journée payante en
-  # petits tickets pour casser le barème progressif.
-  # Simule d'abord : python -m allovalet plan --zone 75008 --until 19:00
-  - name: 8e — journée (SmartPark)
-    enabled: false
-    plate: AB123CD
-    location: "75008"
-    rate: VIS
-    mode: smartpark
-    window:
-      days: [lun-ven]
-      from: "09:00"
-      to: "19:00"
-    min_chunk_minutes: 30
-    max_chunk_minutes: 2h
-    max_cost_per_ticket: 15
-    max_cost_per_day: 40
