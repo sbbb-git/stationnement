@@ -169,6 +169,29 @@ query Introspect($name: String!) {
 }
 """
 
+# Décrit un type dans les deux sens : ce qu'il accepte et ce qu'il renvoie.
+# C'est ce qui aurait signalé tout de suite qu'une opération ne rend pas le
+# type attendu, au lieu de l'apprendre par un refus.
+Q_DESCRIBE_TYPE = """
+query Describe($name: String!) {
+  __type(name: $name) {
+    name
+    kind
+    enumValues { name }
+    inputFields { name type { name kind ofType { name kind } } }
+    fields { name type { name kind ofType { name kind ofType { name kind } } } }
+  }
+}
+"""
+
+Q_ROOT_FIELDS = """
+query RootFields {
+  __schema {
+    queryType { fields { name type { name kind ofType { name kind ofType { name } } } } }
+  }
+}
+"""
+
 # Les opérations et leurs types d'entrée, telles que l'application les utilise.
 OPERATION_INPUTS = {
     "getVehiclesV3": "GetVehiclesInput",
@@ -207,6 +230,15 @@ def best_duration(minutes: int, accepted: list[str] | None = None) -> Duration:
     if minutes % 60 == 0 and "hours" in accepted:
         return Duration(minutes // 60, "Hours")
     return Duration(max(1, -(-minutes // 60)), "Hours")
+
+
+def _type_name(node: dict | None) -> str:
+    """Déplie NON_NULL / LIST jusqu'au nom réel du type."""
+    while isinstance(node, dict):
+        if node.get("name"):
+            return node["name"]
+        node = node.get("ofType")
+    return "?"
 
 
 def _enum_variants(value: str) -> list[str]:
@@ -436,6 +468,23 @@ class PayByPhoneClient:
         if ignored:
             log.debug("%s : champs ignorés %s", type_name, ignored)
         return kept
+
+    def describe_type(self, type_name: str) -> dict:
+        """Tout ce que l'API sait dire d'un type : entrées, sorties, énumération."""
+        data = self.gql(Q_DESCRIBE_TYPE, {"name": type_name}, "__type") or {}
+        return {
+            "name": data.get("name"),
+            "kind": data.get("kind"),
+            "enum": [e["name"] for e in data.get("enumValues") or []],
+            "inputs": [(f["name"], _type_name(f.get("type"))) for f in data.get("inputFields") or []],
+            "outputs": [(f["name"], _type_name(f.get("type"))) for f in data.get("fields") or []],
+        }
+
+    def root_fields(self) -> list[tuple[str, str]]:
+        """Les opérations de lecture et le type que chacune renvoie."""
+        data = self.gql(Q_ROOT_FIELDS, {}, "__schema") or {}
+        fields = ((data.get("queryType") or {}).get("fields")) or []
+        return [(f["name"], _type_name(f.get("type"))) for f in fields]
 
     def input_fields(self, type_name: str) -> list[tuple[str, str]]:
         """Introspection : la forme exacte d'un type d'entrée, telle qu'elle est."""

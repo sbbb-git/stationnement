@@ -47,7 +47,19 @@ jobs:
           restore-keys: allovalet-state-
 
       - name: Vérifier la couverture 75016 et 75008
+        id: passage
         run: python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+          NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
+
+      # En cas d'échec, on interroge l'API sur elle-même et on publie tout :
+      # un seul passage suffit alors à savoir quoi corriger, au lieu d'une
+      # erreur à la fois. N'achète rien.
+      - name: Sonde de diagnostic
+        if: failure() && steps.passage.outcome == 'failure'
+        run: python -m allovalet probe
         env:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}

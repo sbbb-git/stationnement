@@ -151,6 +151,90 @@ def cmd_schema(args) -> int:
     return 1 if problemes else 0
 
 
+def cmd_probe(args) -> int:
+    """Sonde complète : interroge l'API sur elle-même et n'abandonne jamais.
+
+    Chaque bloc capture son erreur et continue, pour qu'un seul passage
+    rapporte tout ce qu'il y a à savoir plutôt qu'une erreur à la fois.
+    N'achète rien.
+    """
+    def essai(titre, action):
+        print(f"\n### {titre}")
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 — une sonde ne s'arrête pas
+            print(f"    ÉCHEC : {exc}")
+
+    print("\n" + "=" * 72)
+    print("SONDE — aucune donnée n'est modifiée, aucun ticket n'est acheté")
+    print("=" * 72)
+
+    cfg = Config.load(args.config)
+    client = build_client(cfg, State())
+    client.authenticate()
+    print(f"\nConnecté. Membre : {client.member_id}")
+
+    def operations():
+        interessant = ("session", "parking", "rate", "vehicle", "payment", "eligib")
+        for nom, retour in sorted(client.root_fields()):
+            if any(k in nom.lower() for k in interessant):
+                print(f"    {nom:<42} → {retour}")
+
+    essai("Opérations de lecture disponibles (filtrées)", operations)
+
+    types = sorted({
+        *OPERATION_INPUTS.values(),
+        "GetParkingSessionsInput", "PeriodType", "ParkingSessionResponse",
+        "RateOption", "Quote",
+    })
+    def decrire():
+        for nom in types:
+            info = client.describe_type(nom)
+            if not info.get("name"):
+                print(f"    {nom} : inconnu de l'API")
+                continue
+            print(f"    {info['name']} ({info['kind']})")
+            if info["enum"]:
+                print(f"        valeurs : {', '.join(info['enum'])}")
+            for champ, kind in info["inputs"]:
+                print(f"        ← {champ:<32} {kind}")
+            for champ, kind in info["outputs"][:40]:
+                print(f"        → {champ:<32} {kind}")
+
+    essai("Formes exactes des types", decrire)
+    essai("Véhicules du compte", lambda: [
+        print(f"    {v.plate}  (id {v.id}, {v.country}, {v.type})") for v in client.vehicles()
+    ])
+    essai("Tickets en cours", lambda: [
+        print(f"    {s.describe()}") for s in client.current_sessions()
+    ] or None)
+
+    for rule in cfg.rules:
+        def zone(rule=rule):
+            options = client.rate_options(rule.location, rule.plate)
+            if not options:
+                print("    aucun tarif renvoyé")
+                return
+            for opt in options:
+                print(f"    type={opt.type!r} nom={opt.name!r} id={opt.id} "
+                      f"max={opt.max_stay_minutes} unités={opt.accepted_time_units}")
+            try:
+                rate = client.pick_rate_option(rule.location, rule.plate, rule.rate)
+            except AlloValetError as exc:
+                print(f"    tarif « {rule.rate} » : {exc}")
+                return
+            duration = best_duration(rule.duration_minutes, rate.accepted_time_units)
+            quote = client.quote(rule.location, rule.plate, duration, rate_option_id=rate.id)
+            print(f"    devis {duration} → {money(quote.cost, quote.currency)} "
+                  f"| quoteId={'oui' if quote.quote_id else 'MANQUANT'} "
+                  f"| début={quote.start} fin={quote.expiry}")
+
+        essai(f"Zone {rule.location} pour {rule.plate}", zone)
+
+    print("\n" + "=" * 72 + "\n")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Vérifie toute la chaîne, règle par règle, sans rien acheter."""
     problems = 0
@@ -257,6 +341,9 @@ def build_parser() -> argparse.ArgumentParser:
     park.add_argument("--plate")
     park.add_argument("--yes", action="store_true")
     park.set_defaults(func=cmd_park)
+
+    probe = sub.add_parser("probe", help="sonde complète de l'API (n'achète rien)")
+    probe.set_defaults(func=cmd_probe)
 
     schema = sub.add_parser("schema", help="forme exacte attendue par l'API (introspection)")
     schema.add_argument("--type")
