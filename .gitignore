@@ -1,5 +1,9 @@
 .env
+.allovalet_state.json
+easypark_creds.json
 screenshots/
 __pycache__/
 *.pyc
 .venv/
+.DS_Store
+.pytest_cache/

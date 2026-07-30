@@ -1,41 +1,53 @@
-name: Ticket stationnement 20h01
+name: Stationnement automatique
 
 on:
   schedule:
-    - cron: "1 18 * * 1-6"  # 20h01 Paris (UTC+2 été) — lun-sam
+    # Toutes les 30 min. Le script décide lui-même s'il y a quelque chose à faire,
+    # donc un passage raté est simplement rattrapé au suivant.
+    # (Le cron GitHub est en UTC, mais ça n'a aucune importance ici : les créneaux
+    #  sont évalués en heure de Paris par le script.)
+    - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Simuler sans rien acheter"
+        type: boolean
+        default: false
+
+concurrency:
+  group: stationnement
+  cancel-in-progress: false
 
 jobs:
-
-  ticket-75016:
-    name: Ticket 75016
+  tickets:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
-      - name: Acheter le ticket HANDI
-        run: python parking_easypark.py --zone 75016
-        env:
-          EP_ID_TOKEN:        ${{ secrets.EP_ID_TOKEN }}
-          EP_PARKING_USER_ID: ${{ secrets.EP_PARKING_USER_ID }}
 
-  ticket-75007:
-    name: Ticket 75007
-    runs-on: ubuntu-latest
-    needs: ticket-75016
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
       - run: pip install -r requirements.txt
-      - name: Acheter le ticket HANDI
-        run: python parking_easypark.py --zone 75007
+
+      # Conserve le cache des barèmes et le suivi des dépenses entre deux passages.
+      - name: Restaurer l'état
+        uses: actions/cache@v4
+        with:
+          path: .allovalet_state.json
+          key: allovalet-state-${{ github.run_id }}
+          restore-keys: allovalet-state-
+
+      - name: Appliquer les règles
+        run: |
+          python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
+          PBP_USERNAME:       ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD:       ${{ secrets.PBP_PASSWORD }}
           EP_ID_TOKEN:        ${{ secrets.EP_ID_TOKEN }}
           EP_PARKING_USER_ID: ${{ secrets.EP_PARKING_USER_ID }}
+          NTFY_TOPIC:         ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
