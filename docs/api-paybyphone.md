@@ -98,6 +98,28 @@ vehicleRegistrationFound  isVehicleRegistrationMissing
 Il n'y a **pas** de notion de tarif « par défaut » : sans `rate:` dans la
 config, on prend le premier tarif renvoyé par la zone.
 
+## Relevé direct depuis l'application (source la plus sûre)
+
+Le raccourci décisif : ouvrir `m.paybyphone.com` dans Chrome, `F12` → onglet
+**Network**, filtrer sur `graphql`, agir dans l'application, puis lire l'onglet
+**Payload** de chaque requête. On y voit la requête exacte, sans rien deviner.
+(Ne pas recopier l'en-tête `Authorization` : c'est un jeton d'accès au compte.)
+
+Relevés ainsi, et donc certains :
+
+```jsonc
+// tickets — en cours comme passés, même opération
+{"input": {"periodType": "CURRENT",  "offset": 0, "limit": 10}}
+{"input": {"periodType": "HISTORIC", "offset": 0, "limit": 50}}
+```
+
+- `periodType` est une énumération **en majuscules** : `CURRENT` / `HISTORIC` ;
+- `getLocationsV1` prend `$input: GetLocationInput!` — type au **singulier** —
+  avec `{locationId: "75001"}` ;
+- une session porte `location { advertisedLocationId name isStallBased }` : le
+  numéro affiché sur l'horodateur peut différer de l'identifiant interne, donc
+  un ticket se reconnaît sur l'un **ou** l'autre.
+
 ## Formes d'entrée : ne pas deviner
 
 Le bundle donne les **noms** des types d'entrée, mais rarement la liste de leurs

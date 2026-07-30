@@ -65,17 +65,23 @@ TOKEN_SKEW = timedelta(seconds=90)
 
 # --------------------------------------------------------------------- GraphQL
 
+# Sous-ensemble de la sélection réellement envoyée par l'application.
 SESSION_FIELDS = """
   parkingSessionId
+  status
+  type
   locationId
   startTime
   expireTime
   stall
+  isStoppable
+  isExtendable
   isRenewable
   renewableAfter
-  isExtendable
   vehicle { licensePlate countryCode }
   ratePolicy { ratePolicyId type }
+  totalCost { amount currency }
+  location { advertisedLocationId name isStallBased }
 """
 
 Q_VEHICLES = """
@@ -651,7 +657,11 @@ class PayByPhoneClient:
         vehicle = item.get("vehicle") or {}
         rate = item.get("ratePolicy") or {}
         cost = item.get("totalCost") or {}
+        lieu = item.get("location") or {}
         return ParkingSession(
+            advertised_location_id=(
+                str(lieu["advertisedLocationId"]) if lieu.get("advertisedLocationId") else None
+            ),
             id=str(item.get("parkingSessionId") or ""),
             plate=str(vehicle.get("licensePlate") or "").upper().replace(" ", ""),
             location_id=str(item.get("locationId") or ""),
@@ -671,17 +681,16 @@ class PayByPhoneClient:
         renvoie un `AutopaySessionResponse` — les parkings en ouvrage, pas la
         voirie. L'API l'a dit elle-même au premier essai contre le vrai compte.
         """
-        sessions = self._sessions("Current")
+        sessions = self._sessions("CURRENT")
         maintenant = utcnow()
         return [s for s in sessions if s.expiry and s.expiry > maintenant]
 
     def history(self, limit: int = 25) -> list[ParkingSession]:
-        return self._sessions("Historic", limit=limit)
+        return self._sessions("HISTORIC", limit=limit)
 
     def _sessions(self, period: str, limit: int | None = None) -> list[ParkingSession]:
-        payload: dict = {"periodType": period}
-        if limit:
-            payload["limit"] = min(limit, 49)
+        # L'application envoie periodType en majuscules, avec offset et limit.
+        payload: dict = {"periodType": period, "offset": 0, "limit": min(limit or 50, 50)}
         payload = self.prune(payload, "GetParkingSessionsInput") or {"periodType": period}
 
         # `periodType` est une énumération : l'orthographe exacte peut différer.
@@ -706,7 +715,7 @@ class PayByPhoneClient:
         for sess in sessions if sessions is not None else self.current_sessions():
             if sess.plate != plate:
                 continue
-            if location_id and sess.location_id and str(sess.location_id) != str(location_id):
+            if location_id and not sess.at_location(location_id):
                 continue
             if not sess.expiry or sess.expiry <= utcnow():
                 continue

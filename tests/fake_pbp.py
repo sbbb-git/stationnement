@@ -102,6 +102,12 @@ class FakePayByPhone:
             "startTime": _iso(now),
             "expireTime": _iso(now + timedelta(minutes=minutes)),
             "stall": None,
+            "status": "Active",
+            "type": "Parking",
+            "isStoppable": True,
+            "totalCost": {"amount": 0.0, "currency": "EUR"},
+            "location": {"advertisedLocationId": location, "name": f"Paris {location}",
+                         "isStallBased": False},
             "isRenewable": renewable,
             "renewableAfter": _iso(now),
             "isExtendable": True,
@@ -119,6 +125,10 @@ class FakePayByPhone:
             "locationId": location,
             "startTime": _iso(end - timedelta(hours=1)),
             "expireTime": _iso(end),
+            "status": "Expired",
+            "type": "Parking",
+            "location": {"advertisedLocationId": location, "name": f"Paris {location}",
+                         "isStallBased": False},
             "isRenewable": False,
             "vehicle": {"licensePlate": plate, "countryCode": "FR"},
             "ratePolicy": {"ratePolicyId": "75016", "type": "VIS"},
@@ -278,12 +288,12 @@ def _make_handler(state: FakePayByPhone):
             if refus:
                 return refus
             periode = payload.get("periodType")
-            if periode not in ("Current", "Historic"):  # énumération stricte, comme en vrai
+            if periode not in ("CURRENT", "HISTORIC"):  # énumération stricte, comme en vrai
                 return self._error(
                     f'Expected type "PeriodType", found {periode}. '
-                    "Valid values: Current, Historic."
+                    "Valid values: CURRENT, HISTORIC."
                 )
-            if periode == "Historic":
+            if periode == "HISTORIC":
                 return self._data(
                     "getParkingSessionsV1", state.past()[: int(payload.get("limit", 25))]
                 )

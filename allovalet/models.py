@@ -108,7 +108,15 @@ class ParkingSession:
     rate_type: str | None = None
     cost: float | None = None
     currency: str | None = None
+    advertised_location_id: str | None = None
     raw: dict = field(default_factory=dict)
+
+    def at_location(self, wanted: str) -> bool:
+        """Le numéro de l'horodateur peut différer de l'identifiant interne."""
+        wanted = str(wanted)
+        return wanted in {
+            str(self.location_id or ""), str(self.advertised_location_id or "")
+        } - {""}
 
     def covers(self, moment: datetime, margin: timedelta = timedelta(0)) -> bool:
         """Le ticket est-il valide à `moment` (+ marge de sécurité) ?"""
