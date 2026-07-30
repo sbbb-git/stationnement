@@ -1,8 +1,9 @@
 # Stationnement automatique
 
-Un ticket **CMI toujours en cours** dans le **75016** et le **75008**, pour la
-plaque AB123CD. Renouvellement au rendez-vous de **20h01**, et rattrapage
-automatique si un trou apparaît.
+Un ticket **« Handi - toutes zones » toujours en cours** pour la plaque
+AB123CD. Ce tarif couvre tout Paris : un seul ticket suffit, quelle que soit
+la zone. Renouvellement au rendez-vous de **20h01**, et rattrapage automatique
+si un trou apparaît.
 
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
@@ -65,7 +66,7 @@ Un ticket n'est déclaré pris que lorsqu'il a été **relu depuis le serveur**.
 
 ## Comment la couverture est garantie
 
-À chaque passage, une seule question par zone : **faut-il un ticket ?**
+À chaque passage, une seule question : **faut-il un ticket ?**
 
 | Situation | Décision |
 |---|---|
@@ -88,18 +89,15 @@ d'Actions par mois, sur les 2 000 gratuites d'un dépôt privé.
 
 ## Mise en route
 
-**1. Fusionner cette branche dans `main`.** GitHub ne déclenche les tâches
-planifiées que depuis la branche par défaut.
+Faite. Le code est sur `main`, les secrets `PBP_USERNAME` et `PBP_PASSWORD`
+sont en place, et le workflow tourne.
 
-**2. Deux secrets** — *Settings → Secrets and variables → Actions* :
+Seul réglage encore utile : le secret **`NTFY_TOPIC`**. Choisis un mot secret,
+abonne-toi à ce sujet dans l'application ntfy, et tu reçois une notification
+à chaque échec — le seul moment où tu aurais quelque chose à faire.
 
-| Nom | Valeur |
-|---|---|
-| `PBP_USERNAME` | numéro PayByPhone avec indicatif (`+336…`) ou email |
-| `PBP_PASSWORD` | mot de passe PayByPhone |
-
-**3. Un essai à blanc** — *Actions → Stationnement → Run workflow*, case
-**Simuler**. Le log dit ce qu'il ferait sans rien acheter.
+Le workflow se déclenche aussi à chaque modification poussée sur `main`, ce qui
+permet de vérifier un changement sans attendre le prochain créneau.
 
 ---
 
@@ -124,10 +122,11 @@ devis et la présence d'un `quoteId`. Il n'achète rien.
 
 ```yaml
 rules:
-  - name: 16e — CMI
+  - name: CMI — Handi toutes zones
     plate: AB123CD
-    location: "75016"       # numéro affiché sur l'horodateur
-    rate: CMI               # type ou nom du tarif — `allovalet rates` le donne
+    location: "75016"       # zone où le ticket est pris ; il vaut partout
+    rate: "1321271030"      # « Handi - toutes zones » — `allovalet rates` le donne
+    toutes_zones: true      # un ticket actif ailleurs compte comme couverture
     duration: 24h
     renew_at: "20:01"       # rendez-vous quotidien
     max_cost_per_ticket: 0  # n'achète que si c'est gratuit

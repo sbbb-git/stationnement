@@ -55,7 +55,7 @@ jobs:
           key: allovalet-state-${{ github.run_id }}
           restore-keys: allovalet-state-
 
-      - name: Vérifier la couverture 75016 et 75008
+      - name: Vérifier la couverture
         id: passage
         run: python -m allovalet run ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
