@@ -18,7 +18,10 @@ Le vrai enchaînement d'un ticket
 --------------------------------
     createQuotesV1        → un devis, et surtout un quoteId
     startParkingSessionV1 → l'achat, à partir de ce quoteId
-    getOpenSessionsV1     → vérification que le ticket existe
+    getParkingSessionsV1  → vérification que le ticket existe
+
+Attention au faux ami : `getOpenSessionsV1` renvoie un `AutopaySessionResponse`,
+c'est-à-dire les parkings en ouvrage, pas les tickets de voirie.
 
 Un devis seul n'achète rien : c'est là que s'arrêtait l'ancien script.
 
