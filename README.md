@@ -156,24 +156,38 @@ deux derniers testés sur les fichiers livrés, pas sur des exemples.
 
 ## État réel, vérifié contre le compte
 
-Premier passage contre le vrai compte le 30/07/2026 :
+Premier passage vert le 30/07/2026 :
 
-- **la connexion fonctionne** (`Connecté ✅`) — identifiants, `grant_type=password`
-  et `client_id=paybyphone_web` sont les bons ;
-- la lecture des tickets échouait parce que j'utilisais `getOpenSessionsV1`,
-  qui renvoie un `AutopaySessionResponse` (parkings en ouvrage). C'est
-  `getParkingSessionsV1` qu'il faut, avec `{periodType: Current}`. Corrigé.
+```
+· [CMI — Handi toutes zones] couvert jusqu'à 31/07 20:00 (reste 19h16)
+```
 
-Le reste de la chaîne — tarifs, devis, achat, vérification — n'a pas encore pu
-s'exécuter : il faut un nouveau passage.
+| Étape | État |
+|---|---|
+| Connexion au compte | ✅ prouvée |
+| Lecture des tickets en cours | ✅ prouvée |
+| Tarifs d'une zone | ✅ prouvée |
+| Devis + `quoteId` | ✅ prouvé — `1 Days → 0,00 €` |
+| Achat | la mutation part sans erreur, mais elle n'a pas encore eu à créer un ticket : le compte était déjà couvert |
+| Vérification | ✅ prouvée (c'est elle qui a reconnu la couverture) |
 
-Ce qui a été fait pour que ça ne dépende pas de mes suppositions : **le client
-ne devine plus la forme des requêtes.** Il introspecte chaque type d'entrée,
-met le résultat en cache, et n'envoie que les champs qui existent réellement.
-On peut donc lui proposer plusieurs orthographes (`plate` et `licensePlate`) :
-c'est l'API qui tranche. Si l'introspection est fermée, la requête part telle
-quelle et l'erreur affiche les champs acceptés.
+Le seul maillon non encore exercé est la création effective d'un ticket. Elle
+le sera au premier renouvellement réel, quand le ticket en cours arrivera à
+expiration — sans intervention.
 
-Un prérequis que seul le titulaire du compte peut confirmer : la plaque doit
-être enregistrée sur le compte PayByPhone et le **droit CMI y être rattaché**,
-sinon aucun tarif CMI n'apparaîtra — ni ici, ni chez AlloValet.
+### Ce qu'il a fallu découvrir
+
+Trois choses qu'aucune lecture de code ne donnait, et qui ont chacune bloqué
+un passage :
+
+1. `getOpenSessionsV1` renvoie de l'**autopay**, pas la voirie. Les tickets
+   sont dans `getParkingSessionsV1`.
+2. Le tarif ne s'appelle pas « CMI » sur ce compte mais **« Handi - toutes
+   zones »**, `ratePolicyId 1321271030`.
+3. Ce tarif **couvre tout Paris** : un ticket pris dans le 17e vaut pour le
+   16e. Chercher une couverture par arrondissement faisait croire à un trou.
+
+La méthode qui a débloqué : lire les requêtes réelles dans l'onglet réseau de
+`m.paybyphone.com`, et faire décrire l'API par elle-même quand un passage
+échoue. Le workflow lance ce diagnostic tout seul en cas d'échec.
+
