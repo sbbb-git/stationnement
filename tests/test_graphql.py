@@ -111,3 +111,39 @@ def test_le_jeton_perime_est_renouvele_en_cours_de_route(client, server):
 
     assert [v.plate for v in client.vehicles()] == [PLATE]
     assert len(server.token_calls) >= 2  # il s'est reconnecté tout seul
+
+
+# ------------------------------------------------ formes d'entrée découvertes
+
+
+def test_les_champs_inconnus_sont_elagues(client, server):
+    """Le client propose plusieurs orthographes ; seules celles qui existent partent."""
+    options = client.rate_options("75016", PLATE)
+    assert [o.type for o in options] == ["CMI", "VIS"]
+    # `licensePlate`, `countryCode`, `advertisedLocationId` n'existent pas dans
+    # GetRateOptionsInput : ils ne doivent jamais avoir été envoyés.
+    assert client.schema_cache["GetRateOptionsInput"] == ["locationId", "plate"]
+
+
+def test_input_vide_pour_les_sessions_ouvertes(client, server):
+    """L'application envoie {} : un champ inventé ferait tout rejeter."""
+    assert client.current_sessions() == []
+    assert "getOpenSessionsV1" in server.operations
+
+
+def test_le_schema_nest_interroge_quune_fois(client, server):
+    client.rate_options("75016", PLATE)
+    introspections = server.operations.count("__type")
+    client.rate_options("75016", PLATE)
+    client.rate_options("75008", PLATE)
+    assert server.operations.count("__type") == introspections
+
+
+def test_sans_introspection_on_envoie_quand_meme(client, server, monkeypatch):
+    """Si l'introspection est fermée, on n'élague pas — on tente la requête."""
+    monkeypatch.setattr(
+        type(client), "input_fields",
+        lambda self, name: (_ for _ in ()).throw(ApiError("introspection désactivée")),
+    )
+    assert client.accepted_fields("GetRateOptionsInput") is None
+    assert client.prune({"nimporte": 1}, "GetRateOptionsInput") == {"nimporte": 1}

@@ -144,9 +144,11 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-69 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+73 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
-vérification, achat fantôme, introspection. Plus la garantie de couverture
+vérification, achat fantôme, introspection et élagage des champs inconnus —
+le faux serveur rejette tout champ hors schéma, comme le vrai. Plus la
+garantie de couverture
 (nuit, trou, rendez-vous non rejoué) et l'horaire réellement configuré — ces
 deux derniers testés sur les fichiers livrés, pas sur des exemples.
 
@@ -157,13 +159,15 @@ deux derniers testés sur les fichiers livrés, pas sur des exemples.
 **Le code n'a jamais tourné contre le vrai compte.** Les endpoints ont été
 sondés en direct et le moteur est calqué sur celui de l'application, mais tant
 que `doctor` n'a pas été lancé avec de vrais identifiants, ça reste une
-hypothèse — y compris la forme exacte de l'entrée de `startParkingSessionV1`,
-pour laquelle le client essaie les variantes plausibles et, en cas de refus,
-affiche les champs réellement acceptés par introspection.
+hypothèse.
 
-Deux prérequis que seul le titulaire du compte peut confirmer :
+Ce qui a été fait pour que ça ne dépende pas de mes suppositions : **le client
+ne devine plus la forme des requêtes.** Il introspecte chaque type d'entrée,
+met le résultat en cache, et n'envoie que les champs qui existent réellement.
+On peut donc lui proposer plusieurs orthographes (`plate` et `licensePlate`) :
+c'est l'API qui tranche. Si l'introspection est fermée, la requête part telle
+quelle et l'erreur affiche les champs acceptés.
 
-- le compte de stationnement est bien chez **PayByPhone** (AlloValet ne gère
-  qu'eux ; ce programme non plus) ;
-- la plaque est enregistrée sur ce compte et le **droit CMI y est rattaché**,
-  sinon aucun tarif CMI n'apparaîtra.
+Un prérequis que seul le titulaire du compte peut confirmer : la plaque doit
+être enregistrée sur le compte PayByPhone et le **droit CMI y être rattaché**,
+sinon aucun tarif CMI n'apparaîtra — ni ici, ni chez AlloValet.

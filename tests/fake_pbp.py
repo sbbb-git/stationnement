@@ -42,9 +42,16 @@ RATE_OPTIONS = {
 
 UNIT_MINUTES = {"minutes": 1, "hours": 60, "days": 1440}
 
+# Formes d'entrée du serveur. Tout champ hors de cette liste est rejeté, comme
+# le ferait un vrai GraphQL : c'est ce qui vérifie que le client élague.
 INPUT_FIELDS = {
     "StartParkingSessionV1Input": ["quoteId", "plate"],
     "RenewParkingSessionV1Input": ["quoteId", "plate", "parkingSessionId"],
+    "GetRateOptionsInput": ["locationId", "plate"],
+    "GetOpenSessionsInput": [],
+    "GetVehiclesInput": [],
+    "GetPaymentAccountsInput": [],
+    "GetParkingSessionsInput": ["limit"],
 }
 
 
@@ -250,11 +257,26 @@ def _make_handler(state: FakePayByPhone):
             return self._data("getPaymentAccountsV1", [{"paymentAccountId": "pay-123"}])
 
         def _rate_options(self, variables):
-            location = str((variables.get("input") or {}).get("locationId", ""))
-            return self._data("getRateOptionsV1", RATE_OPTIONS.get(location, []))
+            payload = variables.get("input") or {}
+            refus = self._champs_inconnus(payload, "GetRateOptionsInput")
+            if refus:
+                return refus
+            return self._data(
+                "getRateOptionsV1", RATE_OPTIONS.get(str(payload.get("locationId", "")), [])
+            )
+
+        def _champs_inconnus(self, payload, type_name):
+            """Rejette comme le ferait un vrai GraphQL si un champ n'existe pas."""
+            inconnus = sorted(set(payload) - set(INPUT_FIELDS.get(type_name, [])))
+            if not inconnus:
+                return None
+            return self._error(
+                f'Field "{inconnus[0]}" is not defined by type "{type_name}".'
+            )
 
         def _open_sessions(self, variables):
-            return self._data("getOpenSessionsV1", state.active())
+            refus = self._champs_inconnus(variables.get("input") or {}, "GetOpenSessionsInput")
+            return refus or self._data("getOpenSessionsV1", state.active())
 
         def _past_sessions(self, variables):
             limit = int((variables.get("input") or {}).get("limit", 25))

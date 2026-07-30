@@ -225,6 +225,7 @@ class PayByPhoneClient:
         expires_at: datetime | None = None,
         on_token_refresh=None,
         country: str = "FR",
+        schema_cache: dict | None = None,
     ):
         self.username = username
         self.password = password
@@ -233,6 +234,7 @@ class PayByPhoneClient:
         self._expires_at = expires_at
         self.on_token_refresh = on_token_refresh
         self.country = country
+        self.schema_cache = schema_cache if schema_cache is not None else {}
         self.http = HttpClient(API_BASE)
 
     # ------------------------------------------------------------------ auth
@@ -394,6 +396,39 @@ class PayByPhoneClient:
                 )
         return text
 
+    def accepted_fields(self, type_name: str) -> set[str] | None:
+        """Champs réellement acceptés par un type d'entrée. `None` si inconnu.
+
+        Le résultat est mis en cache : une seule introspection, réutilisée
+        ensuite. C'est ce qui permet de ne jamais deviner la forme d'un input.
+        """
+        cached = self.schema_cache.get(type_name)
+        if cached is not None:
+            return set(cached) if cached else None
+        try:
+            fields = [name for name, _ in self.input_fields(type_name)]
+        except Exception as exc:  # noqa: BLE001 — l'introspection peut être fermée
+            log.debug("introspection de %s impossible : %s", type_name, exc)
+            self.schema_cache[type_name] = []
+            return None
+        self.schema_cache[type_name] = fields
+        return set(fields) or None
+
+    def prune(self, payload: dict, type_name: str) -> dict:
+        """Ne garde que les clés que l'API connaît, sans rien inventer.
+
+        On peut donc proposer plusieurs orthographes plausibles (`plate` et
+        `licensePlate`, par exemple) : seules celles qui existent partent.
+        """
+        accepted = self.accepted_fields(type_name)
+        if accepted is None:
+            return payload
+        kept = {k: v for k, v in payload.items() if k in accepted}
+        ignored = sorted(set(payload) - set(kept))
+        if ignored:
+            log.debug("%s : champs ignorés %s", type_name, ignored)
+        return kept
+
     def input_fields(self, type_name: str) -> list[tuple[str, str]]:
         """Introspection : la forme exacte d'un type d'entrée, telle qu'elle est."""
         data = self.gql(Q_INTROSPECT_INPUT, {"name": type_name}, "__type")
@@ -436,13 +471,18 @@ class PayByPhoneClient:
     def rate_options(
         self, location_id: str, plate: str | None = None, start: datetime | None = None
     ) -> list[RateOption]:
-        variables = {"input": {"locationId": str(location_id)}}
-        if plate:
-            variables["input"]["licensePlate"] = plate
-        if self.country:
-            variables["input"]["countryCode"] = self.country
-
-        data = self.gql(Q_RATE_OPTIONS, variables, "getRateOptionsV1") or []
+        candidats = {
+            "locationId": str(location_id),
+            "advertisedLocationId": str(location_id),
+            "plate": plate,
+            "licensePlate": plate,
+            "countryCode": self.country,
+            "startTime": start.isoformat().replace("+00:00", "Z") if start else None,
+        }
+        payload = self.prune(
+            {k: v for k, v in candidats.items() if v is not None}, "GetRateOptionsInput"
+        )
+        data = self.gql(Q_RATE_OPTIONS, {"input": payload}, "getRateOptionsV1") or []
         out = []
         for item in data:
             max_stay = item.get("effectiveMaxStayDuration") or {}
@@ -568,9 +608,9 @@ class PayByPhoneClient:
         )
 
     def current_sessions(self) -> list[ParkingSession]:
-        data = self.gql(
-            Q_OPEN_SESSIONS, {"input": {"operatorAccessCodes": []}}, "getOpenSessionsV1"
-        ) or []
+        # L'application envoie un input vide : on fait pareil. Un champ inventé
+        # ici ferait rejeter toute la requête.
+        data = self.gql(Q_OPEN_SESSIONS, {"input": {}}, "getOpenSessionsV1") or []
         return [self._to_session(item) for item in data]
 
     def history(self, limit: int = 25) -> list[ParkingSession]:
@@ -688,10 +728,12 @@ query GetParkingSessionsV1($input: GetParkingSessionsInput!) {
         if not quote.quote_id:
             raise ApiError("Le devis n'a pas renvoyé de quoteId — achat impossible.")
 
-        base = {"quoteId": quote.quote_id, "plate": plate}
+        candidats = {"quoteId": quote.quote_id, "plate": plate, "licensePlate": plate}
         if session_id:
-            base["parkingSessionId"] = session_id
-
+            candidats["parkingSessionId"] = session_id
+        base = self.prune(candidats, OPERATION_INPUTS[field]) or {
+            "quoteId": quote.quote_id, "plate": plate,
+        }
         shapes = [base, {"request": base}, {"quoteId": quote.quote_id}]
         last: ApiError | None = None
         for shape in shapes:

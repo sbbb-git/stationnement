@@ -92,6 +92,24 @@ vehicleRegistrationFound  isVehicleRegistrationMissing
 Il n'y a **pas** de notion de tarif « par défaut » : sans `rate:` dans la
 config, on prend le premier tarif renvoyé par la zone.
 
+## Formes d'entrée : ne pas deviner
+
+Le bundle donne les **noms** des types d'entrée, mais rarement la liste de leurs
+champs : ils sont construits à l'exécution. Deviner est dangereux — un champ
+inventé fait rejeter toute la requête par GraphQL.
+
+Deux relevés sûrs, obtenus en remontant aux sites d'appel :
+
+- `getOpenSessionsV1` est appelé avec **`input: {}`** (map vide) ;
+- `{locationId, vehicleId, plate}` appartient à `getPoeLookupQuoteV1`, **pas**
+  à `getRateOptionsV1` — piège classique.
+
+Pour le reste, le client n'essaie plus de deviner : il introspecte le type
+d'entrée, met le résultat en cache, et n'envoie que les champs qui existent
+vraiment. On peut donc lui proposer plusieurs orthographes plausibles
+(`plate` et `licensePlate`) : l'API tranche. Si l'introspection est fermée,
+on envoie la requête telle quelle et l'erreur reste explicite.
+
 ## En cas de doute
 
 Le programme sait interroger l'API sur elle-même :

@@ -28,6 +28,7 @@ def build_client(cfg: Config, state: State | None = None) -> PayByPhoneClient:
         expires_at=parse_dt(cached.get("expires_at")),
         on_token_refresh=lambda tokens: state.set_tokens("paybyphone", tokens),
         country=cfg.country,
+        schema_cache=state.data.setdefault("schema", {}),
     )
     if not (client.username and client.password) and not client.refresh_token:
         raise AuthError(
