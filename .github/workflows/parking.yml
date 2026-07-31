@@ -69,6 +69,9 @@ jobs:
 
       # Déclenche volontairement un échec pour vérifier que l'alarme se lève.
       # Placé après la prise de tickets : la couverture n'est pas affectée.
+      # Éprouvé le 31/07/2026 (passage #120) : la couverture a réussi, cette
+      # étape a échoué, et l'issue #1 s'est ouverte toute seule. Reste en place,
+      # dormante, pour pouvoir réessayer plus tard sans rien réécrire.
       - name: Épreuve de l'alarme
         if: contains(github.event.head_commit.message, '[test-alerte]')
         run: |

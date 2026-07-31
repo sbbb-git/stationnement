@@ -112,6 +112,19 @@ def test_lalerte_souvre_et_se_referme_toute_seule():
     assert ordre.index("Sonde de diagnostic") < ordre.index("Ouvrir l'alerte")
 
 
+def test_lepreuve_de_lalarme_ne_peut_pas_se_declencher_toute_seule():
+    """L'échec volontaire ne doit se produire que sur demande explicite,
+    et jamais avant la prise de tickets."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    job = workflow["jobs"]["tickets"]
+    etapes = {e.get("name"): e for e in job["steps"] if e.get("name")}
+    epreuve = etapes["Épreuve de l'alarme"]
+    assert epreuve["if"] == "contains(github.event.head_commit.message, '[test-alerte]')"
+
+    ordre = [e.get("name") for e in job["steps"]]
+    assert ordre.index("Vérifier la couverture") < ordre.index("Épreuve de l'alarme")
+
+
 def test_le_cron_passe_a_20h01_ete_comme_hiver():
     for mois, saison in ((7, "été"), (1, "hiver")):
         assert "20:01" in _heures_paris(mois), saison

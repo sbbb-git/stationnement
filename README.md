@@ -110,6 +110,21 @@ Elle contient le lien vers le log du passage, où figure le diagnostic complet.
 Une seule issue reste ouverte à la fois : les passages suivants ne la
 dupliquent pas.
 
+**Éprouvée pour de vrai.** Une alarme jamais déclenchée ne prouve rien : un
+échec a donc été provoqué volontairement (passage #120, 31/07/2026), après la
+prise de tickets pour ne pas toucher à la couverture.
+
+| Étape du passage #120 | Résultat |
+|---|---|
+| Vérifier la couverture | ✅ les tickets ont été pris |
+| Épreuve de l'alarme | ❌ échec volontaire |
+| Ouvrir l'alerte | ✅ **issue #1 créée** |
+| Passage suivant → Refermer l'alerte | ✅ commentée et refermée |
+
+Le déclencheur reste en place mais dormant : il n'agit que si le message de
+commit contient `[test-alerte]`. Un test verrouille cette condition, pour
+qu'un échec volontaire ne puisse jamais survenir sur un passage ordinaire.
+
 ---
 
 ## Les commandes
