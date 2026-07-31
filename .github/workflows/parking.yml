@@ -31,6 +31,10 @@ concurrency:
   group: stationnement
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  issues: write   # l'alerte prend la forme d'une issue
+
 jobs:
   tickets:
     runs-on: ubuntu-latest
@@ -92,3 +96,64 @@ jobs:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
+
+      # --- Alerte sans application tierce -------------------------------
+      # Un échec ouvre une issue ; un succès la referme. Deux avantages sur
+      # une notification : elle persiste tant que le problème dure — on ne peut
+      # pas la rater — et GitHub la relaie par mail nativement, sans rien à
+      # installer. Une seule issue reste ouverte à la fois : les passages
+      # suivants ne la dupliquent pas.
+      - name: Ouvrir l'alerte
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const titre = "⚠️ Stationnement — le renouvellement échoue";
+            const ouvertes = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "stationnement",
+            });
+            if (ouvertes.data.length > 0) {
+              core.info(`Alerte déjà ouverte : #${ouvertes.data[0].number}`);
+              return;
+            }
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                        `/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: titre,
+              labels: ["stationnement"],
+              body: [
+                "Le passage automatique a échoué. **La voiture risque de ne plus",
+                "être couverte.**", "",
+                `Log complet du passage : ${url}`,
+                "",
+                "Le diagnostic (`allovalet probe`) s'y trouve : il donne les",
+                "tarifs de chaque zone, les devis et la forme attendue par l'API.",
+                "",
+                "Cette issue se refermera toute seule au prochain passage réussi.",
+              ].join("\n"),
+            });
+
+      - name: Refermer l'alerte
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ouvertes = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "stationnement",
+            });
+            for (const issue of ouvertes.data) {
+              const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                          `/actions/runs/${context.runId}`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Rétabli — passage réussi : ${url}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: "closed",
+              });
+            }

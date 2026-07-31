@@ -1,9 +1,8 @@
 # Stationnement automatique
 
-Un ticket **« Handi - toutes zones » toujours en cours** pour la plaque
-AB123CD. Ce tarif couvre tout Paris : un seul ticket suffit, quelle que soit
-la zone. Renouvellement au rendez-vous de **20h01**, et rattrapage automatique
-si un trou apparaît.
+Un ticket **Handi toujours en cours** dans le **75016** et le **75008** pour
+la plaque AB123CD. Renouvellement au rendez-vous de **20h01** chaque jour, et
+rattrapage automatique si un trou apparaît à n'importe quelle heure.
 
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
@@ -92,12 +91,24 @@ d'Actions par mois, sur les 2 000 gratuites d'un dépôt privé.
 Faite. Le code est sur `main`, les secrets `PBP_USERNAME` et `PBP_PASSWORD`
 sont en place, et le workflow tourne.
 
-Seul réglage encore utile : le secret **`NTFY_TOPIC`**. Choisis un mot secret,
-abonne-toi à ce sujet dans l'application ntfy, et tu reçois une notification
-à chaque échec — le seul moment où tu aurais quelque chose à faire.
-
 Le workflow se déclenche aussi à chaque modification poussée sur `main`, ce qui
 permet de vérifier un changement sans attendre le prochain créneau.
+
+### Comment on est prévenu d'un échec
+
+**Une issue GitHub s'ouvre toute seule**, et se referme au premier passage
+réussi. Choisi plutôt qu'une notification pour trois raisons :
+
+- elle **persiste** tant que le problème dure — impossible de la rater, alors
+  qu'une notification passée est perdue ;
+- elle **se referme seule**, donc sa seule présence signifie « en panne
+  maintenant », sans avoir à interpréter un historique ;
+- **rien à installer** : GitHub relaie déjà les issues par mail au
+  propriétaire du dépôt.
+
+Elle contient le lien vers le log du passage, où figure le diagnostic complet.
+Une seule issue reste ouverte à la fois : les passages suivants ne la
+dupliquent pas.
 
 ---
 
@@ -122,15 +133,17 @@ devis et la présence d'un `quoteId`. Il n'achète rien.
 
 ```yaml
 rules:
-  - name: CMI — Handi toutes zones
+  - name: 16e — Handi
     plate: AB123CD
-    location: "75016"       # zone où le ticket est pris ; il vaut partout
+    location: "75016"       # numéro affiché sur l'horodateur
     rate: "1321271030"      # « Handi - toutes zones » — `allovalet rates` le donne
-    toutes_zones: true      # un ticket actif ailleurs compte comme couverture
     duration: 24h
     renew_at: "20:01"       # rendez-vous quotidien
     max_cost_per_ticket: 0  # n'achète que si c'est gratuit
 ```
+
+Une règle par arrondissement : malgré son nom, le tarif exige un ticket par
+zone (`409 VehicleAlreadyParked` sinon).
 
 Options globales : `timezone`, `country`, `renew_margin_minutes`, `notify`.
 Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
@@ -143,7 +156,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-73 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+75 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai. Plus la

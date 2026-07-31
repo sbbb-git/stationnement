@@ -98,6 +98,20 @@ def _heures_paris(mois: int) -> set[str]:
     }
 
 
+def test_lalerte_souvre_et_se_referme_toute_seule():
+    """Pas de notification : une issue qui persiste tant que la panne dure."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    job = workflow["jobs"]["tickets"]
+    assert (job.get("permissions") or workflow.get("permissions"))["issues"] == "write"
+
+    etapes = {e.get("name"): e for e in job["steps"] if e.get("name")}
+    assert etapes["Ouvrir l'alerte"]["if"] == "failure()"
+    assert etapes["Refermer l'alerte"]["if"] == "success()"
+    # l'alerte doit venir après le diagnostic, pour que le log le contienne
+    ordre = [e.get("name") for e in job["steps"]]
+    assert ordre.index("Sonde de diagnostic") < ordre.index("Ouvrir l'alerte")
+
+
 def test_le_cron_passe_a_20h01_ete_comme_hiver():
     for mois, saison in ((7, "été"), (1, "hiver")):
         assert "20:01" in _heures_paris(mois), saison
