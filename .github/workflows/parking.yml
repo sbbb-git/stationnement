@@ -66,7 +66,7 @@ jobs:
       # Balayage des arrondissements, déclenché uniquement par un message de
       # commit contenant [sweep]. Aucun achat payant n'est possible.
       - name: Balayage des zones
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sweep]')
+        if: always() && github.event_name == 'push' && contains(github.event.head_commit.message, '[sweep]')
         run: python -m allovalet sweep --debut 75001 --fin 75020
         env:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}

@@ -365,6 +365,11 @@ def _make_handler(state: FakePayByPhone):
             lignes = requete.get("lineItems") or []
             if not lignes:
                 return self._error('Field "lineItems" was not provided.')
+            for ligne in lignes:  # `metadata` est un String côté schéma
+                if not isinstance(ligne.get("metadata", ""), str):
+                    return self._error(
+                        "String cannot parse the given literal of type `ObjectValueNode`."
+                    )
             job_id = str(uuid.uuid4())
             state.jobs.append({"jobId": job_id, "lineItems": lignes})
             for ligne in lignes:
@@ -426,7 +431,7 @@ def _make_handler(state: FakePayByPhone):
                 "parkingSessionId": session["parkingSessionId"],
                 "expireTime": session["expireTime"],
                 "isEarlyCapture": False,
-                "metadata": {"zone": quote["location"]},
+                "metadata": json.dumps({"zone": quote["location"]}),
                 "segmentTotalCost": {
                     "amount": price(quote["policy"], quote["minutes"]), "currency": "EUR"},
             }})

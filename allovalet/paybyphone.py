@@ -926,8 +926,12 @@ class PayByPhoneClient:
             "isEarlyCapture": bool(brut.get("isEarlyCapture")),
             "required": True,
         }
-        if brut.get("metadata") is not None:
-            ligne["metadata"] = brut["metadata"]
+        meta = brut.get("metadata")
+        if meta is not None:
+            # Le champ est déclaré String côté schéma : un objet doit être
+            # transmis sérialisé, sans quoi l'API répond « String cannot parse
+            # the given literal of type ObjectValueNode ».
+            ligne["metadata"] = meta if isinstance(meta, str) else json.dumps(meta)
         try:
             vendor = self.location(location_id).get("legacyVendorId")
             if vendor:
