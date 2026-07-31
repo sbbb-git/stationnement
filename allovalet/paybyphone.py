@@ -140,7 +140,9 @@ mutation StartParkingSessionV1($input: StartParkingSessionV1Input!) {
     parkingSessionResponse {
       parkingSessionId
       expireTime
+      isEarlyCapture
       segmentTotalCost { amount currency }
+      metadata
     }
   }
 }
@@ -152,7 +154,9 @@ mutation RenewParkingSessionV1($input: RenewParkingSessionV1Input!) {
     parkingSessionResponse {
       parkingSessionId
       expireTime
+      isEarlyCapture
       segmentTotalCost { amount currency }
+      metadata
     }
   }
 }
@@ -163,6 +167,31 @@ mutation ExtendParkingSessionV1($input: ExtendParkingSessionV1Input!) {
   extendParkingSessionV1(input: $input) {
     parkingSessionResponse { parkingSessionId expireTime }
   }
+}
+"""
+
+# Sans cette étape, `startParkingSessionV1` renvoie bien un identifiant mais la
+# session n'existe jamais : elle reste en attente de capture. C'est le pendant
+# exact du devis qui n'achète rien.
+M_CREATE_JOB = """
+mutation CreateJobV1($input: CreateJobV1Input!) {
+  createJobV1(input: $input) { createJobResponse { jobId } }
+}
+"""
+
+Q_JOB = """
+query GetJobV1($jobId: UUID!) {
+  getJobV1(jobId: $jobId) {
+    jobId
+    status
+    executionDetails { isFailure code message }
+  }
+}
+"""
+
+Q_LOCATION = """
+query GetLocationsV1($input: GetLocationInput!) {
+  getLocationsV1(input: $input) { locationId name vendorName legacyVendorId }
 }
 """
 
@@ -208,6 +237,7 @@ OPERATION_INPUTS = {
     "startParkingSessionV1": "StartParkingSessionV1Input",
     "renewParkingSessionV1": "RenewParkingSessionV1Input",
     "extendParkingSessionV1": "ExtendParkingSessionV1Input",
+    "createJobV1": "CreateJobV1Input",
 }
 
 
@@ -552,6 +582,15 @@ class PayByPhoneClient:
 
     # ----------------------------------------------------------------- zones
 
+    def location(self, location_id: str) -> dict:
+        """Détails d'une zone — on en tire le `vendorId` exigé par le job."""
+        data = self.gql(
+            Q_LOCATION, {"input": {"locationId": str(location_id)}}, "getLocationsV1"
+        )
+        if isinstance(data, list):
+            return data[0] if data else {}
+        return data or {}
+
     def rate_options(
         self, location_id: str, plate: str | None = None, start: datetime | None = None
     ) -> list[RateOption]:
@@ -785,6 +824,7 @@ class PayByPhoneClient:
                  location_id, plate, duration, quote.cost, quote.currency)
 
         result = self._mutate_session(M_START, "startParkingSessionV1", quote, plate)
+        self._capture(result, str(location_id))
         if not verify:
             return result
         return self._verify(
@@ -811,6 +851,7 @@ class PayByPhoneClient:
         )
         result = self._mutate_session(M_RENEW, "renewParkingSessionV1", quote, session.plate,
                                       session_id=session.id)
+        self._capture(result, session.location_id)
         if not verify:
             return result
         return self._verify(session.plate, session.location_id, set(), result,
@@ -866,6 +907,61 @@ class PayByPhoneClient:
                 raw=response,
             )
         raise last or ApiError(f"{field} : aucune forme d'entrée acceptée.")
+
+    def _capture(self, session: ParkingSession, location_id: str) -> None:
+        """Finalise la session créée par startParkingSessionV1.
+
+        L'application enchaîne systématiquement `createJobV1` puis `getJobV1`.
+        Sans ce job la session reste en attente et n'apparaît jamais parmi les
+        tickets en cours — c'est ce qui faisait échouer tous les achats.
+
+        Le contenu de la ligne reprend celui construit par l'application :
+        pour un montant nul, aucun champ `amount` et aucun moyen de paiement.
+        """
+        brut = session.raw or {}
+        ligne: dict = {
+            "productType": "PARKING",
+            "productReferenceId": session.id,
+            "endingTime": brut.get("expireTime"),
+            "isEarlyCapture": bool(brut.get("isEarlyCapture")),
+            "required": True,
+        }
+        if brut.get("metadata") is not None:
+            ligne["metadata"] = brut["metadata"]
+        try:
+            vendor = self.location(location_id).get("legacyVendorId")
+            if vendor:
+                ligne["vendorId"] = str(vendor)
+        except ApiError as exc:
+            log.debug("vendorId introuvable pour la zone %s : %s", location_id, exc)
+        if session.cost:  # un tarif gratuit n'a ni montant ni paiement
+            ligne["amount"] = {"value": session.cost, "isoCurrencyCode": session.currency}
+
+        data = self.gql(
+            M_CREATE_JOB, {"input": {"request": {"lineItems": [ligne]}}}, "createJobV1"
+        ) or {}
+        job_id = (data.get("createJobResponse") or {}).get("jobId")
+        log.info("Capture demandée — job %s", job_id or "?")
+        if job_id:
+            self._wait_job(job_id)
+
+    def _wait_job(self, job_id: str, attempts: int = 6) -> None:
+        for essai in range(attempts):
+            time.sleep(1 if essai else 0)
+            try:
+                job = self.gql(Q_JOB, {"jobId": job_id}, "getJobV1") or {}
+            except ApiError as exc:
+                log.debug("suivi du job impossible : %s", exc)
+                return
+            statut = str(job.get("status") or "")
+            details = job.get("executionDetails") or {}
+            if details.get("isFailure"):
+                raise ApiError(
+                    f"Capture refusée : {details.get('code')} {details.get('message')}"
+                )
+            log.debug("job %s → %s", job_id, statut)
+            if statut.lower() in ("completed", "complete", "succeeded", "success", "done"):
+                return
 
     def _verify(
         self,

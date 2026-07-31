@@ -1,12 +1,10 @@
-# Un ticket « Handi - toutes zones » toujours en cours pour AB123CD.
+# Un ticket « Handi - toutes zones » toujours en cours dans le 16e et le 8e.
 #
-# Ce tarif (ratePolicyId 1321271030) couvre tout Paris : un seul ticket suffit,
-# quelle que soit la zone où il a été pris. Inutile d'en prendre un par
-# arrondissement — l'API n'en accorderait pas deux.
+# L'historique du compte montre deux tickets par jour, un par arrondissement,
+# et l'API refuse un second ticket dans une zone déjà couverte
+# (409 VehicleAlreadyParked). La couverture se gère donc bien zone par zone.
 #
-# Renouvellement au rendez-vous de 20h01. Si un trou apparaît — passage raté,
-# panne, ticket arrêté à la main — un ticket est repris dans les 30 minutes,
-# à n'importe quelle heure.
+# Chaque ticket court jusqu'à 20h00 le lendemain, d'où le rendez-vous de 20h01.
 
 timezone: Europe/Paris
 country: FR
@@ -18,11 +16,18 @@ notify:
   on_failure: true
 
 rules:
-  - name: CMI — Handi toutes zones
+  - name: 16e — Handi
     plate: AB123CD
-    location: "75016"         # zone où le ticket est pris ; il vaut partout
+    location: "75016"
     rate: "1321271030"        # « Handi - toutes zones », relevé sur le compte
-    toutes_zones: true        # un ticket actif ailleurs compte comme couverture
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0    # garde-fou : n'achète que si c'est gratuit
+
+  - name: 8e — Handi
+    plate: AB123CD
+    location: "75008"
+    rate: "1321271030"
+    duration: 24h
+    renew_at: "20:01"
+    max_cost_per_ticket: 0

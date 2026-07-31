@@ -146,3 +146,40 @@ def test_sans_introspection_on_envoie_quand_meme(client, server, monkeypatch):
     )
     assert client.accepted_fields("GetRateOptionsInput") is None
     assert client.prune({"nimporte": 1}, "GetRateOptionsInput") == {"nimporte": 1}
+
+
+# --------------------------------------------- capture : le maillon manquant
+
+
+def test_sans_capture_le_ticket_nexiste_pas(client, server, monkeypatch):
+    """Le bug réel : startParkingSessionV1 renvoie un identifiant, mais la
+    session reste en attente. Sans createJobV1 elle n'apparaît jamais."""
+    monkeypatch.setattr(type(client), "_capture", lambda self, s, loc: None)
+
+    with pytest.raises(ApiError) as exc:
+        client.start_session(
+            location_id="75016", plate=PLATE, duration=Duration(24, "Hours"),
+            rate_option_id=CMI_POLICY,
+        )
+    assert "non confirmé" in str(exc.value)
+    assert server.active() == []
+    assert len(server.pending) == 1  # créée, mais jamais capturée
+
+
+def test_la_capture_active_le_ticket(client, server):
+    session = client.start_session(
+        location_id="75016", plate=PLATE, duration=Duration(24, "Hours"),
+        rate_option_id=CMI_POLICY,
+    )
+    assert session.id
+    assert len(server.active()) == 1
+    assert server.pending == {}
+    assert "createJobV1" in server.operations
+    assert "getJobV1" in server.operations
+
+    ligne = server.jobs[0]["lineItems"][0]
+    assert ligne["productReferenceId"] == session.id
+    assert ligne["productType"] == "PARKING"
+    assert ligne["required"] is True
+    assert "amount" not in ligne  # tarif gratuit : aucun montant
+    assert ligne["vendorId"] == "9001"

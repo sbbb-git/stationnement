@@ -51,6 +51,8 @@ INPUT_FIELDS = {
     "GetVehiclesInput": [],
     "GetPaymentAccountsInput": [],
     "GetParkingSessionsInput": ["periodType", "offset", "limit"],
+    "CreateJobV1Input": ["request"],
+    "GetLocationInput": ["locationId"],
     "QuoteRequestInput": ["quoteRequestId", "product", "details"],
     "QuoteRequestDetailsInput": [
         "locationId", "advertisedLocationId", "ratePolicyId", "parkingQuoteOperation",
@@ -79,6 +81,8 @@ class FakePayByPhone:
     def __init__(self):
         self.sessions: list[dict] = []
         self.quotes: dict[str, dict] = {}
+        self.pending: dict[str, dict] = {}   # créées mais pas encore capturées
+        self.jobs: list[dict] = []
         self.purchases: list[dict] = []
         self.operations: list[str] = []
         self.swallow_purchases = False   # « acheté » mais aucune session créée
@@ -240,6 +244,9 @@ def _make_handler(state: FakePayByPhone):
                 "getRateOptionsV1": self._rate_options,
                 "getParkingSessionsV1": self._sessions,
                 "createQuotesV1": self._create_quotes,
+                "createJobV1": self._create_job,
+                "getJobV1": self._get_job,
+                "getLocationsV1": self._location,
                 "startParkingSessionV1": self._start,
                 "renewParkingSessionV1": self._renew,
                 "extendParkingSessionV1": self._extend,
@@ -346,6 +353,35 @@ def _make_handler(state: FakePayByPhone):
                 "quoteErrors": [],
             }})
 
+        def _location(self, variables):
+            zone = str((variables.get("input") or {}).get("locationId", ""))
+            return self._data("getLocationsV1", [{
+                "locationId": zone, "name": f"Paris {zone}",
+                "vendorName": "Paris", "legacyVendorId": "9001",
+            }])
+
+        def _create_job(self, variables):
+            requete = (variables.get("input") or {}).get("request") or {}
+            lignes = requete.get("lineItems") or []
+            if not lignes:
+                return self._error('Field "lineItems" was not provided.')
+            job_id = str(uuid.uuid4())
+            state.jobs.append({"jobId": job_id, "lineItems": lignes})
+            for ligne in lignes:
+                session = state.pending.pop(str(ligne.get("productReferenceId", "")), None)
+                if session:
+                    state.sessions.append(session)  # capturée : elle devient active
+            return self._data("createJobV1", {"createJobResponse": {"jobId": job_id}})
+
+        def _get_job(self, variables):
+            job = next((j for j in state.jobs if j["jobId"] == variables.get("jobId")), None)
+            if not job:
+                return self._error("Unknown job")
+            return self._data("getJobV1", {
+                "jobId": job["jobId"], "status": "Completed",
+                "executionDetails": {"isFailure": False, "code": None, "message": None},
+            })
+
         def _quote_of(self, variables):
             payload = variables.get("input") or {}
             if "request" not in payload and not state.accept_flat_input:
@@ -382,9 +418,15 @@ def _make_handler(state: FakePayByPhone):
                 minutes=quote["minutes"], plate=quote["plate"],
                 location=quote["location"], rate_policy_id=quote["policy"],
             )
+            # Comme en vrai : la session n'est pas encore active. Elle attend
+            # sa capture par createJobV1. Sans elle, elle n'apparaîtra jamais.
+            state.sessions.remove(session)
+            state.pending[session["parkingSessionId"]] = session
             return self._data("startParkingSessionV1", {"parkingSessionResponse": {
                 "parkingSessionId": session["parkingSessionId"],
                 "expireTime": session["expireTime"],
+                "isEarlyCapture": False,
+                "metadata": {"zone": quote["location"]},
                 "segmentTotalCost": {
                     "amount": price(quote["policy"], quote["minutes"]), "currency": "EUR"},
             }})
