@@ -107,9 +107,9 @@ def cmd_summary(args) -> int:
     from .etat import markdown, snapshot
 
     cfg, state, client = _context(args)
-    texte = markdown(snapshot(cfg, client, state))
-    if args.out:
-        with open(args.out, "a", encoding="utf-8") as sortie:
+    texte = markdown(snapshot(cfg, client, state), depot=os.getenv("GITHUB_REPOSITORY"))
+    for chemin in filter(None, [args.out, args.aussi]):
+        with open(chemin, "a", encoding="utf-8") as sortie:
             sortie.write(texte + "\n")
     print(texte)
     return 0
@@ -460,6 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     summary = sub.add_parser("summary", help="l'état en Markdown (résumé GitHub Actions)")
     summary.add_argument("--out", help="fichier où ajouter le résumé ($GITHUB_STEP_SUMMARY)")
+    summary.add_argument("--aussi", help="second fichier (corps du tableau de bord)")
     summary.set_defaults(func=cmd_summary)
 
     rates = sub.add_parser("rates", help="tarifs disponibles sur une zone")

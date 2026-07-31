@@ -92,24 +92,25 @@ def duree(minutes: int) -> str:
     return f"{heures} h {reste:02d}" if heures else f"{reste} min"
 
 
-def markdown(vue: dict) -> str:
-    """Le même instantané, en Markdown — pour le résumé d'un passage Actions.
+def markdown(vue: dict, depot: str | None = None) -> str:
+    """Le tableau de bord, en Markdown.
 
-    C'est la façon de consulter l'état depuis un téléphone sans rien installer :
-    GitHub affiche ce résumé en tête du passage.
+    C'est l'interface consultable de partout sans rien installer : GitHub
+    l'affiche en tête de chaque passage, et une issue en garde en permanence
+    la dernière version. `depot` (« proprio/nom ») ajoute les liens d'action.
     """
-    lignes = ["## Stationnement — état du compte", ""]
+    lignes = ["## 🅿️ Stationnement", ""]
     if vue["erreur"]:
         lignes += [f"> ⚠️ lecture du compte impossible : `{vue['erreur']}`", ""]
 
-    lignes += ["| Règle | Couvert par | Expire | Reste | Prochaine action |",
+    lignes += ["| Secteur | Couvert par | Jusqu'à | Reste | Prochaine action |",
                "|---|---|---|---|---|"]
     for regle in vue["regles"]:
         if not regle["activee"]:
-            etat, zone, expire, reste = "désactivée", "—", "—", "—"
+            etat, zone, expire, reste = "désactivé", "—", "—", "—"
         elif regle["couvert"]:
             marque = "✅" if regle["sur_la_preferee"] else "↪️"
-            zone = f"{marque} {regle['zone_couvrante']}"
+            zone = f"{marque} **{regle['zone_couvrante']}**"
             expire = regle["expire"] or "?"
             reste = duree(regle["reste_minutes"])
             etat = regle["action"] or "rien à faire"
@@ -118,6 +119,25 @@ def markdown(vue: dict) -> str:
             etat = regle["action"] or "à prendre"
         lignes.append(f"| {regle['nom']} | {zone} | {expire} | {reste} | {etat} |")
 
-    lignes += ["", f"_{len(vue['tickets'])} ticket(s) en cours · relevé "
-                   f"{vue['genere'][:16].replace('T', ' à ')}_"]
+    lignes += ["", "<details><summary>Zones essayées, dans l'ordre</summary>", ""]
+    for regle in vue["regles"]:
+        chaine = " › ".join(
+            f"**{z}**" if z == regle["zone_couvrante"] else z for z in regle["zones"]
+        )
+        lignes.append(f"- {regle['nom']} — {chaine}")
+    lignes += ["", "</details>", ""]
+
+    if depot:
+        base = f"https://github.com/{depot}"
+        lignes += [
+            f"⚙️ [Changer un réglage]({base}/edit/main/config.yml) · "
+            f"▶️ [Lancer un passage maintenant]({base}/actions/workflows/parking.yml) · "
+            f"🕓 [Historique]({base}/actions)",
+            "",
+        ]
+
+    lignes.append(
+        f"_{len(vue['tickets'])} ticket(s) en cours · mis à jour tout seul · "
+        f"{vue['genere'][:16].replace('T', ' à ')}_"
+    )
     return "\n".join(lignes)

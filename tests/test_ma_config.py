@@ -140,6 +140,16 @@ def test_letat_est_consultable_depuis_le_telephone():
     assert resume["if"] == "always()"
     assert "summary" in resume["run"] and "GITHUB_STEP_SUMMARY" in resume["run"]
 
+    # Le tableau de bord doit être réécrit même quand le passage échoue :
+    # c'est justement là qu'on a besoin de le consulter.
+    tableau = etapes["Tableau de bord"]
+    assert tableau["if"] == "always()"
+    ordre = [e.get("name") for e in workflow["jobs"]["tickets"]["steps"]]
+    assert ordre.index("Résumé de l'état") < ordre.index("Tableau de bord")
+    # Réécriture du corps, jamais de commentaire : une édition ne notifie pas.
+    assert "issues.update" in tableau["with"]["script"]
+    assert "createComment" not in tableau["with"]["script"]
+
 
 def test_lepreuve_de_lalarme_ne_peut_pas_se_declencher_toute_seule():
     """L'échec volontaire ne doit se produire que sur demande explicite,

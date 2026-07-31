@@ -72,10 +72,42 @@ jobs:
       # jusqu'à quand. Lecture seule, et `always()` pour l'avoir même en échec.
       - name: Résumé de l'état
         if: always()
-        run: python -m allovalet summary --out "$GITHUB_STEP_SUMMARY"
+        run: python -m allovalet summary --out "$GITHUB_STEP_SUMMARY" --aussi etat.md
         env:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+
+      # Le tableau de bord : une issue unique, dont le corps est réécrit à
+      # chaque passage. C'est l'interface consultable de partout — un seul lien,
+      # toujours à jour, rien à installer. On modifie le corps sans jamais
+      # commenter : GitHub ne notifie pas une édition, donc pas de bruit.
+      - name: Tableau de bord
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            if (!fs.existsSync("etat.md")) {
+              core.info("Pas d'état lisible — tableau de bord laissé tel quel.");
+              return;
+            }
+            const corps = fs.readFileSync("etat.md", "utf8");
+            const commun = { owner: context.repo.owner, repo: context.repo.repo };
+            const ouvertes = await github.rest.issues.listForRepo({
+              ...commun, state: "open", labels: "tableau-de-bord",
+            });
+            if (ouvertes.data.length > 0) {
+              await github.rest.issues.update({
+                ...commun, issue_number: ouvertes.data[0].number, body: corps,
+              });
+              core.info(`Tableau de bord mis à jour : #${ouvertes.data[0].number}`);
+              return;
+            }
+            const creee = await github.rest.issues.create({
+              ...commun, title: "🅿️ Tableau de bord — stationnement",
+              labels: ["tableau-de-bord"], body: corps,
+            });
+            core.info(`Tableau de bord créé : ${creee.data.html_url}`);
 
       # Déclenche volontairement un échec pour vérifier que l'alarme se lève.
       # Placé après la prise de tickets : la couverture n'est pas affectée.
