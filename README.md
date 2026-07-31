@@ -248,7 +248,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-97 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+99 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.

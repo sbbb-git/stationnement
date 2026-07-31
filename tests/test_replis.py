@@ -102,3 +102,29 @@ def test_la_simulation_annonce_la_zone_de_repli(tmp_path, client, state, server)
     assert report.results[0].status == "simulé"
     assert "zone 75016" in report.results[0].message
     assert server.purchases == []
+
+
+def test_a_egalite_cest_la_zone_preferee_qui_est_citee(tmp_path, client, state, server):
+    """Plusieurs tickets couvrent le secteur : c'est la zone voulue qu'on nomme."""
+    server.add_session(minutes=600, location="75017")
+    server.add_session(minutes=600, location="75016")
+    body = SECTEUR.replace('zones: ["75008", "75016", "75017"]', 'zones: ["75016", "75017"]')
+
+    report = build(tmp_path, client, state, body).tick()
+
+    assert report.results[0].status == OK
+    assert "75017" not in report.results[0].message
+
+
+def test_un_repli_qui_dure_plus_longtemps_lemporte(tmp_path, client, state, server):
+    """La décision suit la couverture réelle, pas la préférence : sinon on
+    renouvellerait alors que le secteur tient encore des heures."""
+    server.add_session(minutes=30, location="75016")   # la préférée, presque finie
+    server.add_session(minutes=600, location="75017")  # un repli, confortable
+    body = SECTEUR.replace('zones: ["75008", "75016", "75017"]', 'zones: ["75016", "75017"]')
+
+    report = build(tmp_path, client, state, body).tick()
+
+    assert report.results[0].status == OK
+    assert "par la zone 75017" in report.results[0].message
+    assert server.purchases == []

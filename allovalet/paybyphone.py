@@ -785,6 +785,13 @@ class PayByPhoneClient:
             else [str(location_id)] if isinstance(location_id, (str, int))
             else [str(z) for z in location_id]
         )
+        def rang(sess) -> int:
+            """Position dans la liste : 0 = la zone préférée."""
+            for i, zone in enumerate(zones):
+                if sess.at_location(zone):
+                    return i
+            return len(zones)
+
         best = None
         for sess in sessions if sessions is not None else self.current_sessions():
             if sess.plate != plate:
@@ -793,7 +800,10 @@ class PayByPhoneClient:
                 continue
             if not sess.expiry or sess.expiry <= utcnow():
                 continue
-            if best is None or sess.expiry > best.expiry:
+            # Celui qui va le plus loin ; à égalité, celui de la zone la plus
+            # proche de la préférée — sinon l'affichage désignerait un repli
+            # alors que la zone voulue est couverte tout autant.
+            if best is None or (sess.expiry, -rang(sess)) > (best.expiry, -rang(best)):
                 best = sess
         return best
 
