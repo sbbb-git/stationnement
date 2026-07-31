@@ -127,6 +127,26 @@ def cmd_park(args) -> int:
     return 0
 
 
+def cmd_history(args) -> int:
+    """Tickets passés — c'est la trace de ce qui a réellement été créé."""
+    cfg, _, client = _context(args)
+    tz = ZoneInfo(cfg.timezone)
+    sessions = sorted(
+        client.history(limit=args.limit), key=lambda s: s.start or s.expiry, reverse=True
+    )
+    print(f"\n{len(sessions)} derniers tickets :")
+    for sess in sessions:
+        debut = f"{sess.start.astimezone(tz):%d/%m %H:%M}" if sess.start else "?"
+        fin = f"{sess.expiry.astimezone(tz):%d/%m %H:%M}" if sess.expiry else "?"
+        etat = (sess.raw or {}).get("status") or "?"
+        print(f"  • {debut} → {fin}  {sess.plate}  zone {str(sess.location_id):<8}"
+              f"{(sess.rate_type or '?'):<8} {etat}  {money(sess.cost) if sess.cost else 'gratuit'}")
+    if not sessions:
+        print("  — aucun")
+    print()
+    return 0
+
+
 def cmd_schema(args) -> int:
     """Introspecte l'API : la forme exacte attendue par chaque opération."""
     _, _, client = _context(args)
@@ -344,6 +364,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     probe = sub.add_parser("probe", help="sonde complète de l'API (n'achète rien)")
     probe.set_defaults(func=cmd_probe)
+
+    history = sub.add_parser("history", help="tickets passés — trace de ce qui a été créé")
+    history.add_argument("--limit", type=int, default=15)
+    history.set_defaults(func=cmd_history)
 
     schema = sub.add_parser("schema", help="forme exacte attendue par l'API (introspection)")
     schema.add_argument("--type")

@@ -63,6 +63,16 @@ jobs:
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
 
+      # Sur un passage déclenché par une modification du code, on publie aussi
+      # l'historique : c'est la trace de ce qui a réellement été créé sur le
+      # compte, la seule preuve que l'achat aboutit. Lecture seule.
+      - name: Historique récent
+        if: always() && github.event_name == 'push'
+        run: python -m allovalet history
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+
       # En cas d'échec, on interroge l'API sur elle-même et on publie tout :
       # un seul passage suffit alors à savoir quoi corriger, au lieu d'une
       # erreur à la fois. N'achète rien.
