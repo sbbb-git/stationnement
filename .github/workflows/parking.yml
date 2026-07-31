@@ -67,6 +67,14 @@ jobs:
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
 
+      # Déclenche volontairement un échec pour vérifier que l'alarme se lève.
+      # Placé après la prise de tickets : la couverture n'est pas affectée.
+      - name: Épreuve de l'alarme
+        if: contains(github.event.head_commit.message, '[test-alerte]')
+        run: |
+          echo "Échec volontaire — vérification que l'alerte s'ouvre."
+          exit 1
+
       # Balayage des arrondissements, déclenché uniquement par un message de
       # commit contenant [sweep]. Aucun achat payant n'est possible.
       - name: Balayage des zones
