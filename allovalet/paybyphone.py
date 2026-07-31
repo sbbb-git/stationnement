@@ -774,12 +774,22 @@ class PayByPhoneClient:
         raise derniere or ApiError("getParkingSessionsV1 : aucune période acceptée.")
 
     def find_active(self, plate, location_id=None, sessions=None):
+        """Le ticket en cours qui va le plus loin, sur cette plaque.
+
+        `location_id` accepte une zone, une **liste de zones** — un groupe de
+        replis : un ticket sur n'importe laquelle compte — ou rien du tout.
+        """
         plate = plate.upper().replace(" ", "")
+        zones = (
+            [] if not location_id
+            else [str(location_id)] if isinstance(location_id, (str, int))
+            else [str(z) for z in location_id]
+        )
         best = None
         for sess in sessions if sessions is not None else self.current_sessions():
             if sess.plate != plate:
                 continue
-            if location_id and not sess.at_location(location_id):
+            if zones and not any(sess.at_location(z) for z in zones):
                 continue
             if not sess.expiry or sess.expiry <= utcnow():
                 continue

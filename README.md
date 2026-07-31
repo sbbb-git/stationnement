@@ -1,11 +1,40 @@
 # Stationnement automatique
 
-Un ticket **Handi toujours en cours** dans le **75016** et le **75008** pour
-la plaque AB123CD. Renouvellement au rendez-vous de **20h01** chaque jour, et
-rattrapage automatique si un trou apparaît à n'importe quelle heure.
+Un ticket **Handi toujours en cours** dans deux secteurs de Paris pour la
+plaque AB123CD : celui du **75008** et celui du **75016**. Renouvellement au
+rendez-vous de **20h01** chaque jour, rattrapage automatique si un trou
+apparaît à n'importe quelle heure, et **repli sur la zone voisine** si la zone
+voulue refuse.
 
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
+
+---
+
+## Les deux secteurs, et leurs replis
+
+Un ticket pris n'importe où dans un secteur couvre tout le secteur. La
+configuration liste donc les zones **dans l'ordre où on les veut** : la
+première est la zone visée, les suivantes servent quand elle refuse.
+
+| Secteur | On essaie, dans cet ordre |
+|---|---|
+| 75001–75011 | **75008** → 75007 → 75006 → … → 75001 → 75009 → 75010 → 75011 |
+| 75012–75020 | **75016** → 75017 → 75018 → 75019 → 75020 → 75015 → … → 75012 |
+
+Concrètement :
+
+- un ticket sur le 75007 **compte** comme couverture du secteur du 8e — la
+  règle est satisfaite, aucun second ticket n'est pris ;
+- si le 75008 refuse — tarif absent, devis rejeté, véhicule déjà stationné,
+  tarif devenu payant — on descend la liste jusqu'à ce qu'une zone accepte ;
+- on s'arrête à la **première** qui donne un ticket : jamais deux pour une même
+  règle ;
+- après un refus, le compte est **relu** avant d'essayer ailleurs : un
+  « véhicule déjà stationné » veut dire *couvert*, pas *essaie à côté*.
+
+Pour qu'il n'y ait aucun ticket, il faudrait donc que les onze zones d'un
+secteur refusent le même jour.
 
 ---
 
@@ -69,10 +98,13 @@ Un ticket n'est déclaré pris que lorsqu'il a été **relu depuis le serveur**.
 
 | Situation | Décision |
 |---|---|
-| Aucun ticket en cours | on en prend un **immédiatement**, quelle que soit l'heure |
+| Aucun ticket dans le secteur | on en prend un **immédiatement**, quelle que soit l'heure |
 | Le ticket expire dans moins de 25 min | on le reprend **avant** le trou |
 | Il est 20h01 passé et le ticket ne tient pas jusqu'à demain 20h01 | rendez-vous quotidien |
 | Sinon | rien |
+
+« Un ticket » veut dire : sur **n'importe quelle zone du secteur**, pas
+seulement la zone préférée.
 
 Le rendez-vous n'a lieu qu'une fois par soir. Quand une session en cours est
 renouvelable — l'API le dit elle-même avec `isRenewable` — on la renouvelle au
@@ -127,20 +159,63 @@ qu'un échec volontaire ne puisse jamais survenir sur un passage ordinaire.
 
 ---
 
+## L'interface
+
+Deux façons de regarder, selon qu'on a la machine sous la main ou juste un
+téléphone.
+
+### Sur le téléphone : rien à installer
+
+Chaque passage publie **le résumé de l'état en tête de son log** : quelle zone
+couvre quelle règle, jusqu'à quand, et ce que fera le prochain passage. Visible
+depuis l'appli GitHub, y compris quand le passage a échoué.
+
+```
+| Règle              | Couvert par | Expire      | Reste  | Prochaine action |
+| Secteur 8e — Handi | ↪️ 75007    | 31/07 11:13 | 1 h 29 | rien à faire     |
+| Secteur 16e — Handi| ✅ 75016    | 31/07 16:53 | 7 h 09 | rien à faire     |
+```
+
+`✅` = la zone voulue · `↪️` = un repli · `❌` = découvert.
+
+### Sur la machine : voir **et** modifier
+
+```bash
+python -m allovalet ui        # →  http://127.0.0.1:8787
+```
+
+Une page unique, sans dépendance ni service à héberger :
+
+- l'état de chaque secteur — temps restant, zone qui couvre, chaîne des replis
+  avec la zone active en vert ;
+- les tickets en cours et les derniers passages ;
+- l'éditeur des automatisations : zones, ordre des replis, heure du
+  rendez-vous, durée, activation. **Une config invalide n'est jamais
+  enregistrée** — elle est relue avant écriture ;
+- deux boutons : *Simuler* (n'achète rien) et *Prendre les tickets maintenant*.
+
+Elle modifie `config.yml`, le fichier que lit GitHub Actions : il faut le
+**pousser** pour que l'automatisation en tienne compte.
+
+---
+
 ## Les commandes
 
 ```bash
+python -m allovalet ui                     # l'interface
 python -m allovalet doctor                 # diagnostic complet, rien acheté
 python -m allovalet run [--dry-run]        # un passage
 python -m allovalet status                 # tickets en cours et état des règles
+python -m allovalet summary                # l'état en Markdown
 python -m allovalet rates --zone 75016     # libellés de tarifs de la zone
 python -m allovalet park --zone 75016 --duration 24h   # ticket manuel
 python -m allovalet schema                 # forme exacte attendue par l'API
 ```
 
 `doctor` est le point d'entrée : il contrôle la config, la connexion, les
-véhicules du compte, les tickets en cours, puis pour chaque règle le tarif, le
-devis et la présence d'un `quoteId`. Il n'achète rien.
+véhicules du compte, les tickets en cours, puis descend la liste des zones de
+chaque règle jusqu'à en trouver une qui donne un devis gratuit avec `quoteId`.
+Il n'achète rien.
 
 ---
 
@@ -148,17 +223,19 @@ devis et la présence d'un `quoteId`. Il n'achète rien.
 
 ```yaml
 rules:
-  - name: 16e — Handi
+  - name: Secteur 8e — Handi
     plate: AB123CD
-    location: "75016"       # numéro affiché sur l'horodateur
+    zones:                  # liste ORDONNÉE : la 1re est la zone voulue,
+      - "75008"             # les suivantes sont les replis du même secteur
+      - "75007"
+      - "75006"
     rate: "1321271030"      # « Handi - toutes zones » — `allovalet rates` le donne
     duration: 24h
     renew_at: "20:01"       # rendez-vous quotidien
     max_cost_per_ticket: 0  # n'achète que si c'est gratuit
 ```
 
-Une règle par arrondissement : malgré son nom, le tarif exige un ticket par
-zone (`409 VehicleAlreadyParked` sinon).
+Une seule zone ? `location: "75016"` suffit, comme avant.
 
 Options globales : `timezone`, `country`, `renew_margin_minutes`, `notify`.
 Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
@@ -171,13 +248,22 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-75 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+97 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
-le faux serveur rejette tout champ hors schéma, comme le vrai. Plus la
-garantie de couverture
-(nuit, trou, rendez-vous non rejoué) et l'horaire réellement configuré — ces
-deux derniers testés sur les fichiers livrés, pas sur des exemples.
+le faux serveur rejette tout champ hors schéma, comme le vrai.
+
+Sont verrouillés en plus :
+
+- **les replis** — repli effectif quand la zone voulue refuse, un ticket de
+  repli qui compte comme couverture, un seul ticket par règle, et le refus
+  « déjà stationné » qui ne fait pas acheter à côté ;
+- **la garantie de couverture** — nuit, trou, rendez-vous non rejoué ;
+- **l'interface** — elle est interrogée par HTTP comme le ferait un
+  navigateur : une config cassée n'est jamais écrite, et son verdict est
+  exactement celui du moteur ;
+- **les fichiers livrés** — zones et ordre des replis, horaire, cron, alerte :
+  testés sur `config.yml` et le workflow, pas sur des exemples.
 
 ---
 

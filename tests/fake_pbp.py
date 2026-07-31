@@ -33,10 +33,16 @@ RATE_OPTIONS = {
          "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
          "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
     ],
+    # Pas de CMI ici : c'est la zone qui sert à éprouver le repli.
     "75008": [
         {"name": "Visiteur", "type": "VIS", "ratePolicyId": "75008",
          "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
          "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
+    ],
+    "75017": [
+        {"name": "Carte Mobilité Inclusion", "type": "CMI", "ratePolicyId": CMI_POLICY,
+         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Hours", "Days"],
+         "effectiveMaxStayDuration": {"quantity": 24, "timeUnit": "Hours"}},
     ],
 }
 

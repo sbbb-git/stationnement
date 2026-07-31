@@ -23,15 +23,34 @@ def ma_config() -> Config:
     return Config.load(ROOT / "config.yml")
 
 
-def test_une_regle_par_arrondissement():
-    """L'historique du compte montre deux tickets par jour, un par zone, et
-    l'API refuse un second ticket dans une zone déjà couverte."""
+def test_une_regle_par_secteur():
+    """Deux secteurs, chacun visant sa zone : le 75008 et le 75016."""
     rules = ma_config().rules
-    assert [r.location for r in rules] == ["75016", "75008"]
+    assert [r.location for r in rules] == ["75008", "75016"]
     assert {r.plate for r in rules} == {"AB123CD"}
     assert {r.rate for r in rules} == {"1321271030"}
     assert not any(r.toutes_zones for r in rules)
     assert all(r.enabled for r in rules)
+
+
+def test_chaque_secteur_a_ses_zones_de_repli_dans_le_bon_ordre():
+    """« Si 75008 échoue → 75007, puis 75006… ; si 75016 échoue → 75017… »
+
+    Les deux secteurs sont disjoints : un repli ne doit jamais empiéter sur
+    l'autre, sinon les deux règles se disputeraient la même zone.
+    """
+    huit, seize = ma_config().rules
+
+    assert huit.zones[:4] == ["75008", "75007", "75006", "75005"]
+    assert seize.zones[:4] == ["75016", "75017", "75018", "75019"]
+
+    assert {int(z) for z in huit.zones} <= set(range(75001, 75012))
+    assert {int(z) for z in seize.zones} <= set(range(75012, 75021))
+    assert not set(huit.zones) & set(seize.zones)
+
+    # Le secteur entier doit être disponible : c'est ce qui rend le trou de
+    # couverture improbable — il faudrait que toutes les zones refusent.
+    assert len(huit.zones) == 11 and len(seize.zones) == 9
 
 
 def test_ticket_de_24h_et_gratuit_seulement():
@@ -110,6 +129,16 @@ def test_lalerte_souvre_et_se_referme_toute_seule():
     # l'alerte doit venir après le diagnostic, pour que le log le contienne
     ordre = [e.get("name") for e in job["steps"]]
     assert ordre.index("Sonde de diagnostic") < ordre.index("Ouvrir l'alerte")
+
+
+def test_letat_est_consultable_depuis_le_telephone():
+    """Le résumé doit être publié à chaque passage, réussi ou non — sinon on ne
+    peut plus consulter l'état justement quand ça va mal."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    etapes = {e.get("name"): e for e in workflow["jobs"]["tickets"]["steps"] if e.get("name")}
+    resume = etapes["Résumé de l'état"]
+    assert resume["if"] == "always()"
+    assert "summary" in resume["run"] and "GITHUB_STEP_SUMMARY" in resume["run"]
 
 
 def test_lepreuve_de_lalarme_ne_peut_pas_se_declencher_toute_seule():

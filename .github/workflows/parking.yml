@@ -67,6 +67,16 @@ jobs:
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
 
+      # L'état, en tête du passage : c'est l'interface consultable depuis un
+      # téléphone, sans rien installer — quelle zone couvre quelle règle, et
+      # jusqu'à quand. Lecture seule, et `always()` pour l'avoir même en échec.
+      - name: Résumé de l'état
+        if: always()
+        run: python -m allovalet summary --out "$GITHUB_STEP_SUMMARY"
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+
       # Déclenche volontairement un échec pour vérifier que l'alarme se lève.
       # Placé après la prise de tickets : la couverture n'est pas affectée.
       # Éprouvé le 31/07/2026 (passage #120) : la couverture a réussi, cette

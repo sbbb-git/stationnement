@@ -1,5 +1,6 @@
 """Ligne de commande.
 
+    python -m allovalet ui         # interface : état + modification des règles
     python -m allovalet doctor     # diagnostic complet, à faire en premier
     python -m allovalet run        # un passage (ce que fait GitHub Actions)
     python -m allovalet status     # tickets en cours et état des règles
@@ -78,11 +79,39 @@ def cmd_status(args) -> int:
     now_local = datetime.now(tz)
     runner = Runner(cfg, client)
     for rule in cfg.rules:
-        active = client.find_active(rule.plate, rule.location, sessions)
+        active = client.find_active(rule.plate, rule.zones, sessions)
         etat = runner._why_act(rule, active, now_local) or "couvert"
+        if active:
+            etat += f" par la zone {active.location_id}"
         flag = "" if rule.enabled else " (désactivée)"
         print(f"  • {rule.name}{flag} — {rule.plate} zone {rule.location} → {etat}")
+        if rule.fallbacks:
+            print(f"      replis : {' → '.join(rule.fallbacks)}")
     print()
+    return 0
+
+
+def cmd_ui(args) -> int:
+    """L'interface : voir l'état, modifier les règles, lancer un passage."""
+    from .ui import serve  # importé ici : une commande en ligne n'en a pas besoin
+
+    return serve(args.config, port=args.port, ouvrir=not args.no_open)
+
+
+def cmd_summary(args) -> int:
+    """L'état, en Markdown — pour le résumé d'un passage GitHub Actions.
+
+    C'est ce qui permet de consulter la situation depuis un téléphone, sans
+    rien installer : GitHub affiche ce résumé en tête du passage.
+    """
+    from .etat import markdown, snapshot
+
+    cfg, state, client = _context(args)
+    texte = markdown(snapshot(cfg, client, state))
+    if args.out:
+        with open(args.out, "a", encoding="utf-8") as sortie:
+            sortie.write(texte + "\n")
+    print(texte)
     return 0
 
 
@@ -296,6 +325,7 @@ def cmd_probe(args) -> int:
 
     for rule in cfg.rules:
         def zone(rule=rule):
+            print(f"    replis prévus : {' → '.join(rule.fallbacks) or 'aucun'}")
             options = client.rate_options(rule.location, rule.plate)
             if not options:
                 print("    aucun tarif renvoyé")
@@ -362,30 +392,39 @@ def cmd_doctor(args) -> int:
         problems += 1
 
     for rule in cfg.rules:
-        print(f"\n--- règle « {rule.name} » ({rule.plate}, zone {rule.location})")
+        print(f"\n--- règle « {rule.name} » ({rule.plate}, zones {' → '.join(rule.zones)})")
         if plates and rule.plate not in plates:
             print(f"    [KO] plaque {rule.plate} absente du compte PayByPhone")
             problems += 1
-        try:
-            rate = client.pick_rate_option(rule.location, rule.plate, rule.rate)
-            print(f"    [ok] tarif   {rate.type or '?'} « {rate.name} » (id {rate.id})")
-        except AlloValetError as exc:
-            print(f"    [KO] tarif   {exc}")
-            problems += 1
-            continue
-        try:
-            duration = best_duration(rule.duration_minutes, rate.accepted_time_units)
-            quote = client.quote(rule.location, rule.plate, duration, rate_option_id=rate.id)
-            print(f"    [ok] devis   {duration} → {money(quote.cost, quote.currency)} "
-                  f"(quoteId {'oui' if quote.quote_id else 'MANQUANT'})")
+        # On descend la liste comme le fait le programme : la règle va bien
+        # tant qu'**une** zone du secteur accepte, pas seulement la préférée.
+        prete = False
+        for zone in rule.zones:
+            marque = "→" if zone == rule.location else " ↳"
+            try:
+                rate = client.pick_rate_option(zone, rule.plate, rule.rate)
+            except AlloValetError as exc:
+                print(f"    {marque} {zone} tarif refusé : {exc}")
+                continue
+            try:
+                duration = best_duration(rule.duration_minutes, rate.accepted_time_units)
+                quote = client.quote(zone, rule.plate, duration, rate_option_id=rate.id)
+            except AlloValetError as exc:
+                print(f"    {marque} {zone} devis refusé : {exc}")
+                continue
             if not quote.quote_id:
-                print("    [KO] sans quoteId, l'achat est impossible")
-                problems += 1
+                print(f"    {marque} {zone} sans quoteId — achat impossible")
+                continue
             if quote.cost and rule.max_cost_per_ticket == 0:
-                print("    [KO] ce tarif est payant alors que max_cost_per_ticket vaut 0")
-                problems += 1
-        except AlloValetError as exc:
-            print(f"    [KO] devis   {exc}")
+                print(f"    {marque} {zone} payant ({money(quote.cost, quote.currency)}) "
+                      "— écarté par max_cost_per_ticket")
+                continue
+            print(f"    [ok] {zone} · {rate.type or '?'} « {rate.name} » · {duration} → "
+                  f"{money(quote.cost, quote.currency)}")
+            prete = True
+            break
+        if not prete:
+            print(f"    [KO] aucune des {len(rule.zones)} zones ne peut donner de ticket")
             problems += 1
 
     print(f"\n=== {'Tout est prêt ✅' if not problems else str(problems) + ' problème(s) ❌'} ===")
@@ -413,6 +452,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="tickets en cours et état des règles")
     status.set_defaults(func=cmd_status)
+
+    ui = sub.add_parser("ui", help="interface web locale : état + modification des règles")
+    ui.add_argument("--port", type=int, default=8787)
+    ui.add_argument("--no-open", action="store_true", help="ne pas ouvrir le navigateur")
+    ui.set_defaults(func=cmd_ui)
+
+    summary = sub.add_parser("summary", help="l'état en Markdown (résumé GitHub Actions)")
+    summary.add_argument("--out", help="fichier où ajouter le résumé ($GITHUB_STEP_SUMMARY)")
+    summary.set_defaults(func=cmd_summary)
 
     rates = sub.add_parser("rates", help="tarifs disponibles sur une zone")
     rates.add_argument("--zone", required=True)

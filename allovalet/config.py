@@ -32,11 +32,18 @@ def _expand(value):
 
 @dataclass
 class Rule:
-    """« Sur cette plaque, dans cette zone, avec ce tarif, toujours un ticket. »"""
+    """« Sur cette plaque, dans ce groupe de zones, toujours un ticket. »
+
+    `zones` est une **liste ordonnée de replis** : la première est celle qu'on
+    veut, les suivantes servent quand elle refuse. Elles appartiennent au même
+    secteur de stationnement, donc un ticket sur n'importe laquelle couvre la
+    règle — c'est ce qui permet de garantir « toujours un ticket actif » même
+    quand la zone préférée dit non.
+    """
 
     name: str
     plate: str
-    location: str
+    zones: list[str]
     rate: str | None = None
     duration_minutes: int = 1440
     renew_at: str | None = None
@@ -51,16 +58,14 @@ class Rule:
     def parse(cls, data: dict, index: int) -> "Rule":
         if not isinstance(data, dict):
             raise ConfigError(f"règle #{index + 1} : doit être un objet")
-        missing = [k for k in ("plate", "location") if not data.get(k)]
-        if missing:
-            raise ConfigError(
-                f"règle #{index + 1} ({data.get('name', 'sans nom')}) : "
-                f"champ(s) manquant(s) {missing}"
-            )
+        nom = data.get("name", "sans nom")
+        if not data.get("plate"):
+            raise ConfigError(f"règle #{index + 1} ({nom}) : champ `plate` manquant")
+        zones = cls._zones(data, index, nom)
         rule = cls(
             name=str(data.get("name") or f"règle {index + 1}"),
             plate=str(data["plate"]).upper().replace(" ", "").replace("-", ""),
-            location=str(data["location"]).strip(),
+            zones=zones,
             rate=str(data["rate"]).strip() if data.get("rate") else None,
             duration_minutes=parse_duration(data.get("duration", "24h")),
             renew_at=(
@@ -82,8 +87,37 @@ class Rule:
             raise ConfigError(f"règle « {rule.name} » : `duration` doit être positive")
         return rule
 
+    @staticmethod
+    def _zones(data: dict, index: int, nom) -> list[str]:
+        """`zones: [...]` ou, forme courte d'une seule zone, `location:`."""
+        brut = data.get("zones", data.get("location"))
+        if brut is None or brut == []:
+            raise ConfigError(
+                f"règle #{index + 1} ({nom}) : il faut `zones:` (liste ordonnée, "
+                "la première est la zone préférée) ou `location:` pour une seule zone"
+            )
+        if not isinstance(brut, (list, tuple)):
+            brut = [brut]
+        zones: list[str] = []
+        for zone in brut:
+            zone = str(zone).strip()
+            if zone and zone not in zones:  # l'ordre porte le sens : on le garde
+                zones.append(zone)
+        if not zones:
+            raise ConfigError(f"règle #{index + 1} ({nom}) : `zones` est vide")
+        return zones
+
+    @property
+    def location(self) -> str:
+        """La zone préférée — celle qu'on essaie en premier."""
+        return self.zones[0]
+
+    @property
+    def fallbacks(self) -> list[str]:
+        return self.zones[1:]
+
     def key(self) -> str:
-        return f"{self.plate}@{self.location}"
+        return f"{self.plate}@{self.zones[0]}"
 
 
 @dataclass

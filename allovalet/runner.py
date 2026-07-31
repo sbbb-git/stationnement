@@ -34,6 +34,10 @@ FAILED = "échec"
 ICONS = {OK: "·", SKIPPED: "·", PURCHASED: "✅", PLANNED: "🧪", BLOCKED: "⛔", FAILED: "❌"}
 
 
+class ZoneRefusee(Exception):
+    """Cette zone-ci ne convient pas — essayer la suivante du même secteur."""
+
+
 @dataclass
 class RuleResult:
     rule: str
@@ -127,10 +131,11 @@ class Runner:
 
     def _apply(self, rule: Rule) -> RuleResult:
         now_local = datetime.now(self.tz)
-        # Un tarif « toutes zones » se couvre globalement : un ticket pris dans
-        # le 17e vaut pour le 16e. Chercher par zone ferait croire à un trou et
-        # relancerait un achat inutile à chaque passage.
-        zone_recherchee = None if rule.toutes_zones else rule.location
+        # La couverture se juge sur **tout le groupe** de zones : les replis
+        # appartiennent au même secteur, donc un ticket sur le 75007 couvre la
+        # règle qui vise le 75008. Chercher la seule zone préférée ferait croire
+        # à un trou et rachèterait un ticket inutile à chaque passage.
+        zone_recherchee = None if rule.toutes_zones else rule.zones
         active = self.client.find_active(rule.plate, zone_recherchee, self.sessions())
 
         if not rule.window.contains(now_local):
@@ -145,13 +150,19 @@ class Runner:
 
         reason = self._why_act(rule, active, now_local)
         if not reason:
-            reste = active.expiry - now_local.astimezone(timezone.utc)
-            return RuleResult(
-                rule.name, OK,
-                f"couvert jusqu'à {self._local(active.expiry)} (reste {_fmt_delta(reste)})",
-                session=active,
-            )
+            return self._couvert(rule, active, now_local)
         return self._take_ticket(rule, reason)
+
+    def _couvert(self, rule: Rule, active: ParkingSession, now_local: datetime) -> RuleResult:
+        reste = active.expiry - now_local.astimezone(timezone.utc)
+        # Dire par quelle zone : sur un groupe de replis, ce n'est pas toujours
+        # la zone préférée, et c'est précisément ce qu'on veut pouvoir vérifier.
+        par = "" if active.at_location(rule.location) else f" par la zone {active.location_id}"
+        return RuleResult(
+            rule.name, OK,
+            f"couvert{par} jusqu'à {self._local(active.expiry)} (reste {_fmt_delta(reste)})",
+            session=active,
+        )
 
     def _why_act(
         self, rule: Rule, active: ParkingSession | None, now_local: datetime
@@ -197,13 +208,63 @@ class Runner:
     # ----------------------------------------------------------------- achat
 
     def _take_ticket(self, rule: Rule, reason: str) -> RuleResult:
-        rate = self.client.pick_rate_option(rule.location, rule.plate, rule.rate)
+        """Descend la liste des zones jusqu'à ce qu'une accepte.
+
+        Une zone peut refuser pour toutes sortes de raisons — tarif absent,
+        devis rejeté, véhicule déjà stationné, tarif devenu payant. Aucune ne
+        doit laisser la voiture découverte tant qu'il reste une zone du même
+        secteur à essayer. On s'arrête à la **première** qui donne un ticket :
+        jamais deux tickets pour une même règle.
+        """
+        refus: list[str] = []
+        panne = False  # une erreur d'API, par opposition à un simple « non »
+        for rang, zone in enumerate(rule.zones):
+            try:
+                resultat = self._take_ticket_in(rule, zone, reason, refus)
+            except (ApiError, NotEligibleError, ZoneRefusee) as exc:
+                panne = panne or isinstance(exc, ApiError)
+                refus.append(f"{zone} : {_court(exc)}")
+                log.warning("[%s] zone %s refusée : %s", rule.name, zone, exc)
+                if rang + 1 < len(rule.zones) and self._deja_couvert(rule):
+                    return self._couvert(
+                        rule, self.client.find_active(rule.plate, rule.zones, self.sessions()),
+                        datetime.now(self.tz),
+                    )
+                continue
+            return resultat
+
+        # « Bloqué » quand toutes les zones ont dit non (tarif absent, trop
+        # cher) ; « échec » dès qu'une a cassé techniquement. Les deux lèvent
+        # l'alerte, mais la distinction dit s'il faut corriger la config ou l'API.
+        zones = f"la zone {rule.location}" if len(rule.zones) == 1 else \
+                f"aucune des {len(rule.zones)} zones"
+        return RuleResult(
+            rule.name, FAILED if panne else BLOCKED,
+            f"{reason} — {zones} n'a accepté · " + " · ".join(refus),
+        )
+
+    def _deja_couvert(self, rule: Rule) -> bool:
+        """Relit le compte : un refus peut vouloir dire « déjà pris ici ».
+
+        Sans cette relecture, une zone qui répond « véhicule déjà stationné »
+        ferait acheter un second ticket sur la zone suivante alors que la règle
+        est déjà couverte.
+        """
+        self._sessions = None
+        active = self.client.find_active(rule.plate, rule.zones, self.sessions())
+        margin = timedelta(minutes=self.cfg.margin_for(rule))
+        return bool(active and active.covers(datetime.now(timezone.utc), margin))
+
+    def _take_ticket_in(
+        self, rule: Rule, zone: str, reason: str, refus: list[str]
+    ) -> RuleResult:
+        rate = self.client.pick_rate_option(zone, rule.plate, rule.rate)
         duration = best_duration(rule.duration_minutes, rate.accepted_time_units)
 
         quote = None
         try:
             quote = self.client.quote(
-                rule.location, rule.plate, duration, rate_option_id=rate.id, stall=rule.stall
+                zone, rule.plate, duration, rate_option_id=rate.id, stall=rule.stall
             )
         except ApiError as exc:
             log.warning("Devis indisponible (%s) — garde-fous de config seuls.", exc)
@@ -214,24 +275,24 @@ class Runner:
             and rule.max_cost_per_ticket is not None
             and cost > rule.max_cost_per_ticket + 1e-9
         ):
-            return RuleResult(
-                rule.name, BLOCKED,
-                f"{reason} — refusé : ticket à {money(cost)} > plafond "
-                f"{money(rule.max_cost_per_ticket)} (`max_cost_per_ticket`)",
-                cost=cost,
+            # Un refus de prix n'est pas un échec définitif : la zone suivante
+            # du secteur est peut-être encore gratuite.
+            raise ZoneRefusee(
+                f"{money(cost)} > plafond {money(rule.max_cost_per_ticket)}"
             )
 
         detail = (
-            f"zone {rule.location} · {rate.type or rate.name} · {duration} · "
+            f"zone {zone} · {rate.type or rate.name} · {duration} · "
             f"{money(cost, quote.currency) if quote else 'prix inconnu'}"
         )
         if self.dry_run:
-            return RuleResult(rule.name, PLANNED, f"{reason} → achèterait : {detail}",
+            return RuleResult(rule.name, PLANNED,
+                              f"{reason} → achèterait : {detail}{_replis(refus)}",
                               cost=cost or 0.0)
 
         payment = self.client.payment_account_id() if cost else None
         session = self.client.start_session(
-            location_id=rule.location,
+            location_id=zone,
             plate=rule.plate,
             duration=duration,
             rate_option_id=rate.id,
@@ -244,7 +305,8 @@ class Runner:
             self.state.add_spend(rule.key(), cost)
         return RuleResult(
             rule.name, PURCHASED,
-            f"{reason} → ticket pris : {detail} · expire {self._local(session.expiry)}",
+            f"{reason} → ticket pris : {detail} · expire {self._local(session.expiry)}"
+            f"{_replis(refus)}",
             session=session, cost=cost or 0.0,
         )
 
@@ -256,3 +318,13 @@ def _fmt_delta(delta: timedelta) -> str:
     total = int(delta.total_seconds() // 60)
     hours, minutes = divmod(max(0, total), 60)
     return f"{hours}h{minutes:02d}" if hours else f"{minutes}min"
+
+
+def _court(exc: Exception) -> str:
+    return " ".join(str(exc).split())[:110]
+
+
+def _replis(refus: list[str]) -> str:
+    """Dire quelles zones ont été essayées avant : c'est ce qui permet de
+    comprendre pourquoi le ticket n'est pas sur la zone habituelle."""
+    return f" (repli — refus : {' · '.join(refus)})" if refus else ""

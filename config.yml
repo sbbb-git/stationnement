@@ -1,14 +1,16 @@
-# Un ticket « Handi - toutes zones » toujours en cours dans le 16e et le 8e.
+# Deux secteurs, un ticket Handi toujours actif dans chacun.
 #
-# L'historique du compte montre deux tickets par jour, un par arrondissement,
-# et l'API refuse un second ticket dans une zone déjà couverte
-# (409 VehicleAlreadyParked). La couverture se gère donc bien zone par zone.
+# `zones` est une liste **ordonnée** : la première est celle qu'on veut, les
+# suivantes sont des replis du **même secteur** — un ticket sur n'importe
+# laquelle couvre donc la règle entière. Si le 75008 refuse, on prend le
+# 75007, puis le 75006, etc., jusqu'à ce qu'une accepte.
 #
+# Secteurs : 75001–75011 d'un côté, 75012–75020 de l'autre.
 # Chaque ticket court jusqu'à 20h00 le lendemain, d'où le rendez-vous de 20h01.
 
 timezone: Europe/Paris
 country: FR
-renew_margin_minutes: 25
+renew_margin_minutes: 25    # on reprend le ticket 25 min avant qu'il n'expire
 
 notify:
   ntfy_topic: ${NTFY_TOPIC}
@@ -16,17 +18,37 @@ notify:
   on_failure: true
 
 rules:
-  - name: 16e — Handi
+  - name: Secteur 8e — Handi
     plate: AB123CD
-    location: "75016"
+    zones:
+      - "75008"   # la zone voulue
+      - "75007"   # puis les replis, en descendant
+      - "75006"
+      - "75005"
+      - "75004"
+      - "75003"
+      - "75002"
+      - "75001"
+      - "75009"
+      - "75010"
+      - "75011"
     rate: "1321271030"        # « Handi - toutes zones », relevé sur le compte
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0    # garde-fou : n'achète que si c'est gratuit
 
-  - name: 8e — Handi
+  - name: Secteur 16e — Handi
     plate: AB123CD
-    location: "75008"
+    zones:
+      - "75016"   # la zone voulue
+      - "75017"   # puis les replis, en montant
+      - "75018"
+      - "75019"
+      - "75020"
+      - "75015"
+      - "75014"
+      - "75013"
+      - "75012"
     rate: "1321271030"
     duration: 24h
     renew_at: "20:01"
