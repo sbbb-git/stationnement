@@ -127,6 +127,71 @@ def cmd_park(args) -> int:
     return 0
 
 
+def cmd_sweep(args) -> int:
+    """Tente un ticket sur une plage de zones, puis liste ce qui existe vraiment.
+
+    Sert à savoir quelles zones acceptent réellement le tarif. Aucun achat
+    payant n'est possible : une zone dont le devis n'est pas à 0 € est ignorée.
+    """
+    cfg, _, client = _context(args)
+    tz = ZoneInfo(cfg.timezone)
+    plate = args.plate or cfg.rules[0].plate
+    voulu = args.rate or (cfg.rules[0].rate if cfg.rules else None)
+    zones = [str(z) for z in range(args.debut, args.fin + 1)]
+
+    print(f"\nBalayage {zones[0]} → {zones[-1]} pour {plate}, tarif « {voulu} »")
+    print("(aucun achat payant possible : un devis non nul est ignoré)\n")
+
+    avant = {s.id for s in client.current_sessions()}
+    resultats = []
+
+    for zone in zones:
+        etat = ""
+        try:
+            rate = client.pick_rate_option(zone, plate, voulu)
+        except AlloValetError:
+            resultats.append((zone, "—", "pas de tarif Handi"))
+            continue
+        try:
+            duration = best_duration(cfg.rules[0].duration_minutes, rate.accepted_time_units)
+            quote = client.quote(zone, plate, duration, rate_option_id=rate.id)
+        except AlloValetError as exc:
+            resultats.append((zone, rate.id, f"devis refusé : {str(exc)[:90]}"))
+            continue
+        if quote.cost:
+            resultats.append((zone, rate.id, f"ignoré — payant ({money(quote.cost)})"))
+            continue
+        if args.dry_run:
+            resultats.append((zone, rate.id, f"devis ok, quoteId {'oui' if quote.quote_id else 'non'}"))
+            continue
+        try:
+            # Pas de vérification unitaire : on l'établit une fois pour toutes
+            # à la fin, en relisant les tickets réellement en cours.
+            session = client.start_session(
+                location_id=zone, plate=plate, duration=duration,
+                rate_option_id=rate.id, verify=False,
+            )
+            etat = f"achat accepté, id {(session.id or '?')[:8]}"
+        except AlloValetError as exc:
+            etat = f"achat refusé : {str(exc)[:90]}"
+        resultats.append((zone, rate.id, etat))
+
+    print(f"{'zone':<8}{'ratePolicyId':<14}résultat")
+    for zone, rid, etat in resultats:
+        print(f"{zone:<8}{str(rid):<14}{etat}")
+
+    apres = client.current_sessions()
+    print(f"\n--- tickets réellement en cours après le balayage ({len(apres)}) ---")
+    for sess in apres:
+        neuf = " ← NOUVEAU" if sess.id not in avant else ""
+        fin = f"{sess.expiry.astimezone(tz):%d/%m %H:%M}" if sess.expiry else "?"
+        print(f"  • zone {str(sess.location_id):<8} {sess.plate}  {sess.rate_type or '?':<8}"
+              f" jusqu'à {fin}{neuf}")
+    crees = [s for s in apres if s.id not in avant]
+    print(f"\n=== {len(crees)} ticket(s) créé(s) par ce balayage ===\n")
+    return 0
+
+
 def cmd_history(args) -> int:
     """Tickets passés — c'est la trace de ce qui a réellement été créé."""
     cfg, _, client = _context(args)
@@ -364,6 +429,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     probe = sub.add_parser("probe", help="sonde complète de l'API (n'achète rien)")
     probe.set_defaults(func=cmd_probe)
+
+    sweep = sub.add_parser("sweep", help="tenter un ticket sur une plage de zones")
+    sweep.add_argument("--debut", type=int, default=75001)
+    sweep.add_argument("--fin", type=int, default=75020)
+    sweep.add_argument("--rate")
+    sweep.add_argument("--plate")
+    sweep.add_argument("--dry-run", action="store_true")
+    sweep.set_defaults(func=cmd_sweep)
 
     history = sub.add_parser("history", help="tickets passés — trace de ce qui a été créé")
     history.add_argument("--limit", type=int, default=15)

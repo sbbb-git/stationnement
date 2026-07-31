@@ -63,6 +63,15 @@ jobs:
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
 
+      # Balayage des arrondissements, déclenché uniquement par un message de
+      # commit contenant [sweep]. Aucun achat payant n'est possible.
+      - name: Balayage des zones
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sweep]')
+        run: python -m allovalet sweep --debut 75001 --fin 75020
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+
       # Sur un passage déclenché par une modification du code, on publie aussi
       # l'historique : c'est la trace de ce qui a réellement été créé sur le
       # compte, la seule preuve que l'achat aboutit. Lecture seule.
