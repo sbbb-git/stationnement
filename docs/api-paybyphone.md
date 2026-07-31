@@ -138,6 +138,56 @@ voirie.
   numéro affiché sur l'horodateur peut différer de l'identifiant interne, donc
   un ticket se reconnaît sur l'un **ou** l'autre.
 
+## L'achat n'est pas fini tant que la capture n'a pas eu lieu
+
+C'est le piège le plus coûteux de tout ce travail, et il se produit **deux
+fois** dans la même chaîne :
+
+```
+createQuotesV1         →  un devis. N'achète rien.
+startParkingSessionV1  →  une session EN ATTENTE. N'active rien.
+createJobV1            →  la capture. C'est elle qui rend le ticket réel.
+getJobV1               →  suivi de la capture.
+getParkingSessionsV1   →  vérification.
+```
+
+Sans `createJobV1`, `startParkingSessionV1` renvoie pourtant un
+`parkingSessionId` et aucune erreur. Un balayage des vingt arrondissements a
+donné dix-neuf « achats acceptés » et **zéro ticket créé**, ni en cours ni
+dans l'historique.
+
+La ligne du job, telle que l'application la construit :
+
+```jsonc
+{"input": {"request": {"lineItems": [{
+  "productType": "PARKING",
+  "productReferenceId": "<parkingSessionId>",
+  "vendorId": "<legacyVendorId de la zone>",
+  "endingTime": "<expireTime>",
+  "isEarlyCapture": false,
+  "required": true,
+  "metadata": "<chaîne, pas un objet>"
+}]}}}
+```
+
+Deux détails qui coûtent chacun un aller-retour :
+
+- **`metadata` est déclaré `String`.** L'objet renvoyé par
+  `startParkingSessionV1` doit être retransmis **sérialisé**, sinon l'API
+  répond `String cannot parse the given literal of type ObjectValueNode`.
+- **Montant nul : ni `amount`, ni `paymentMethod`.** Le code de l'application
+  écarte lui-même ces deux champs quand le prix est zéro.
+
+`isEarlyCapture` et `metadata` proviennent de la réponse d'achat ; `vendorId`
+de `getLocationsV1`.
+
+## Une contrainte par zone, pas globale
+
+Malgré son nom, « Handi - toutes zones » ne dispense pas d'un ticket par
+arrondissement. L'API répond `409 VehicleAlreadyParked` sur une zone déjà
+couverte, et accepte les autres. L'historique du compte le confirme : deux
+tickets par jour, un dans le 16e et un dans le 8e.
+
 ## Formes d'entrée : ne pas deviner
 
 Le bundle donne les **noms** des types d'entrée, mais rarement la liste de leurs

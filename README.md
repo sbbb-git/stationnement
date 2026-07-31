@@ -155,38 +155,45 @@ deux derniers testés sur les fichiers livrés, pas sur des exemples.
 
 ## État réel, vérifié contre le compte
 
-Premier passage vert le 30/07/2026 :
+**Chaîne complète prouvée le 31/07/2026.** Des tickets ont été réellement
+créés, vérifiés en les relisant depuis le compte :
 
 ```
-· [CMI — Handi toutes zones] couvert jusqu'à 31/07 20:00 (reste 19h16)
+=== 17 ticket(s) créé(s) ===
+  • zone 75001 … 75020  AB123CD  CUSTOM  jusqu'à 31/07 20:00 ← NOUVEAU
 ```
 
 | Étape | État |
 |---|---|
-| Connexion au compte | ✅ prouvée |
-| Lecture des tickets en cours | ✅ prouvée |
-| Tarifs d'une zone | ✅ prouvée |
-| Devis + `quoteId` | ✅ prouvé — `1 Days → 0,00 €` |
-| Achat | la mutation part sans erreur, mais elle n'a pas encore eu à créer un ticket : le compte était déjà couvert |
-| Vérification | ✅ prouvée (c'est elle qui a reconnu la couverture) |
+| Connexion | ✅ |
+| Lecture des tickets | ✅ |
+| Tarifs de la zone | ✅ |
+| Devis + `quoteId` | ✅ `1 Days → 0,00 €` |
+| Achat | ✅ |
+| **Capture (`createJobV1`)** | ✅ — sans elle, rien n'existe |
+| Vérification | ✅ |
 
-Le seul maillon non encore exercé est la création effective d'un ticket. Elle
-le sera au premier renouvellement réel, quand le ticket en cours arrivera à
-expiration — sans intervention.
+### Les quatre découvertes qui ont débloqué
 
-### Ce qu'il a fallu découvrir
-
-Trois choses qu'aucune lecture de code ne donnait, et qui ont chacune bloqué
-un passage :
+Aucune n'était devinable depuis le code seul :
 
 1. `getOpenSessionsV1` renvoie de l'**autopay**, pas la voirie. Les tickets
    sont dans `getParkingSessionsV1`.
-2. Le tarif ne s'appelle pas « CMI » sur ce compte mais **« Handi - toutes
-   zones »**, `ratePolicyId 1321271030`.
-3. Ce tarif **couvre tout Paris** : un ticket pris dans le 17e vaut pour le
-   16e. Chercher une couverture par arrondissement faisait croire à un trou.
+2. Le tarif ne s'appelle pas « CMI » mais **« Handi - toutes zones »**,
+   `ratePolicyId 1321271030`.
+3. **`startParkingSessionV1` ne finalise rien.** Il crée une session en
+   attente ; c'est `createJobV1` qui la rend réelle. Dix-neuf « achats
+   acceptés » avaient produit zéro ticket.
+4. `metadata` est déclaré `String` : l'objet renvoyé par l'achat doit être
+   retransmis **sérialisé**.
 
-La méthode qui a débloqué : lire les requêtes réelles dans l'onglet réseau de
-`m.paybyphone.com`, et faire décrire l'API par elle-même quand un passage
-échoue. Le workflow lance ce diagnostic tout seul en cas d'échec.
+Malgré son nom, le tarif exige **un ticket par arrondissement** : l'API répond
+`409 VehicleAlreadyParked` sur une zone déjà couverte.
+
+### La méthode
+
+Lire les requêtes réelles dans l'onglet réseau de `m.paybyphone.com`, et faire
+tourner le workflow à chaque correction poussée sur `main` — avec un
+diagnostic automatique en cas d'échec. Chaque passage rapportait précisément
+quoi corriger.
 
