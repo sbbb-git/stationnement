@@ -144,3 +144,25 @@ class Window:
             names[d] for d in sorted(self.days)
         )
         return f"{days} {self.start.strftime('%H:%M')}→{self.end.strftime('%H:%M')}"
+
+
+def secondes_avant(cible: str, maintenant: datetime, plafond_minutes: int) -> int:
+    """Combien de temps dormir pour tomber pile sur `cible` (« 20:05 ») ?
+
+    GitHub n'honore qu'une partie des passages programmés et les décale
+    librement : compter sur l'heure de déclenchement ne suffit pas. Un passage
+    qui arrive **avant** l'heure du relais peut en revanche l'attendre — c'est
+    ce qui rend le rendez-vous ponctuel quel que soit le retard du planificateur.
+
+    Renvoie 0 si l'heure est passée, ou si elle est trop loin pour qu'attendre
+    soit raisonnable (`plafond_minutes`) : mieux vaut alors rendre la main et
+    laisser un passage ultérieur s'en charger.
+    """
+    heure, minute = (int(x) for x in cible.split(":"))
+    rendez_vous = maintenant.replace(
+        hour=heure, minute=minute, second=0, microsecond=0
+    )
+    reste = (rendez_vous - maintenant).total_seconds()
+    if reste <= 0 or reste > plafond_minutes * 60:
+        return 0
+    return int(reste)

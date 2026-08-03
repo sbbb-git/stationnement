@@ -6,12 +6,13 @@ on:
     # sur ce dépôt : 16 passages par jour pour 56 demandés, avec des trous de
     # 3 h. Inutile d'en demander plus : la densité se met là où elle sert.
     #
-    # Veille horaire : rattrape un trou imprévu à n'importe quelle heure.
-    - cron: "1 * * * *"
-    # La reprise du soir, seul moment où un ticket finit vraiment (20h00) :
-    # un passage toutes les 10 min. 18h-20h UTC couvre 20h-22h Paris l'été et
-    # 19h-21h l'hiver — le relais est donc encadré dans les deux cas.
-    - cron: "2,12,22,32,42,52 18-20 * * *"
+    # Veille toutes les deux heures : rattrape un trou imprévu, et laisse la
+    # place (et les minutes) au créneau du soir, qui est le seul qui compte.
+    - cron: "1 */2 * * *"
+    # Le relais de 20h00, à fond : un passage toutes les 5 min. 17h-20h UTC
+    # couvre 19h-22h Paris l'été et 18h-21h l'hiver — l'heure du relais est
+    # encadrée dans les deux cas, avec de l'avance pour pouvoir l'attendre.
+    - cron: "*/5 17-20 * * *"
   # Chaque correction poussée sur main déclenche un passage réel : c'est ce qui
   # permet de vérifier une modification sans attendre le prochain créneau.
   # Sans risque de dépense : `max_cost_per_ticket: 0` n'autorise que le gratuit.
@@ -39,7 +40,8 @@ permissions:
 jobs:
   tickets:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 35 min d'attente possible avant le relais, plus le passage lui-même.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +61,16 @@ jobs:
           path: .allovalet_state.json
           key: allovalet-state-${{ github.run_id }}
           restore-keys: allovalet-state-
+
+      # Le vrai remède au planificateur de GitHub : un passage déclenché en
+      # avance attend l'heure exacte au lieu d'agir trop tôt (le ticket court
+      # encore) ou de laisser le suivant arriver trop tard. Il suffit donc
+      # qu'**un seul** des passages de 19h30-20h05 soit honoré pour que le
+      # relais tombe à 20h05 pile. Au-delà du plafond, aucune attente : le
+      # passage fait son travail normalement.
+      - name: Attendre le relais de 20h05
+        if: github.event_name == 'schedule'
+        run: python -m allovalet wait --at 20:05 --max-minutes 35
 
       - name: Vérifier la couverture
         id: passage

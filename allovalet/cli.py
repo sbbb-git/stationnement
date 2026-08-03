@@ -15,6 +15,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -88,6 +89,26 @@ def cmd_status(args) -> int:
         if rule.fallbacks:
             print(f"      replis : {' → '.join(rule.fallbacks)}")
     print()
+    return 0
+
+
+def cmd_wait(args) -> int:
+    """Attend l'heure du relais, quand le passage arrive un peu en avance.
+
+    C'est ce qui rend le rendez-vous ponctuel : GitHub déclenche quand il veut,
+    mais le passage, lui, sait attendre l'heure exacte. Au-delà du plafond, il
+    rend la main tout de suite — un passage plus tardif s'en chargera.
+    """
+    from .schedule import secondes_avant
+
+    cfg = Config.load(args.config)
+    maintenant = datetime.now(ZoneInfo(cfg.timezone))
+    delai = secondes_avant(args.at, maintenant, args.max_minutes)
+    if not delai:
+        print(f"{maintenant:%H:%M} — pas d'attente (relais de {args.at}).")
+        return 0
+    print(f"{maintenant:%H:%M} — attente de {delai // 60} min pour agir à {args.at} pile.")
+    time.sleep(delai)
     return 0
 
 
@@ -452,6 +473,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="tickets en cours et état des règles")
     status.set_defaults(func=cmd_status)
+
+    attendre = sub.add_parser("wait", help="attendre l'heure exacte du relais")
+    attendre.add_argument("--at", default="20:05", help="heure visée (fuseau de la config)")
+    attendre.add_argument("--max-minutes", type=int, default=35,
+                          help="au-delà, rendre la main tout de suite")
+    attendre.set_defaults(func=cmd_wait)
 
     ui = sub.add_parser("ui", help="interface web locale : état + modification des règles")
     ui.add_argument("--port", type=int, default=8787)

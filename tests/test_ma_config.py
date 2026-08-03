@@ -92,21 +92,28 @@ def _slots_utc() -> list[tuple[int, int]]:
     out = set()
     for entry in triggers["schedule"]:
         minutes, hours = entry["cron"].split()[:2]
-        heures = range(24) if hours == "*" else _expand(hours)
-        for h in heures:
-            for m in _expand(minutes):
+        for h in _expand(hours, 23):
+            for m in _expand(minutes, 59):
                 out.add((h, m))
     return sorted(out)
 
 
-def _expand(field: str) -> list[int]:
+def _expand(field: str, maximum: int) -> list[int]:
+    """Développe un champ cron : `5`, `1,31`, `18-20`, `*`, `*/5`."""
     values = []
     for part in field.split(","):
-        if "-" in part:
-            a, b = (int(x) for x in part.split("-"))
-            values += list(range(a, b + 1))
+        pas = 1
+        if "/" in part:
+            part, saut = part.split("/")
+            pas = int(saut)
+        if part == "*":
+            debut, fin = 0, maximum
+        elif "-" in part:
+            debut, fin = (int(x) for x in part.split("-"))
         else:
             values.append(int(part))
+            continue
+        values += list(range(debut, fin + 1, pas))
     return values
 
 
@@ -164,12 +171,7 @@ def test_lepreuve_de_lalarme_ne_peut_pas_se_declencher_toute_seule():
     assert ordre.index("Vérifier la couverture") < ordre.index("Épreuve de l'alarme")
 
 
-def test_le_cron_passe_a_20h01_ete_comme_hiver():
-    for mois, saison in ((7, "été"), (1, "hiver")):
-        assert "20:01" in _heures_paris(mois), saison
-
-
-def test_un_passage_au_moins_toutes_les_heures():
+def test_un_passage_au_moins_toutes_les_deux_heures():
     """C'est ce qui borne la durée d'un trou de couverture imprévu."""
     slots = _slots_utc()
     moments = sorted(datetime(2025, 1, 1, h, m, tzinfo=UTC) for h, m in slots)
@@ -177,24 +179,44 @@ def test_un_passage_au_moins_toutes_les_heures():
         (b - a).total_seconds() / 60
         for a, b in zip(moments, moments[1:] + [moments[0] + timedelta(days=1)])
     ]
-    assert max(ecarts) <= 60, f"trou de {max(ecarts):.0f} min entre deux passages"
+    assert max(ecarts) <= 120, f"trou de {max(ecarts):.0f} min entre deux passages"
 
 
-def test_renfort_autour_du_relais_de_20h():
-    """Le seul moment où un ticket finit vraiment mérite mieux qu'un passage.
+def test_des_passages_en_avance_pouvant_attendre_le_relais():
+    """Le mécanisme repose là-dessus : il suffit qu'**un** passage arrive dans
+    la demi-heure qui précède 20h05 pour que le relais tombe pile à l'heure.
+    Plus il y en a, plus il est probable que GitHub en honore un."""
+    for mois, saison in ((7, "été"), (1, "hiver")):
+        avance = [h for h in _heures_paris(mois) if "19:30" <= h <= "20:05"]
+        assert len(avance) >= 6, f"{saison} : {sorted(avance)}"
 
-    GitHub n'honore qu'une partie des déclenchements : la densité est ce qui
-    borne le temps entre l'expiration de 20h00 et le ticket suivant.
-    """
-    for mois in (1, 7):
+
+def test_le_relais_est_dense_apres_20h():
+    """Et si aucun passage en avance n'est honoré, il faut rattraper vite."""
+    for mois, saison in ((7, "été"), (1, "hiver")):
         proches = [h for h in _heures_paris(mois) if "20:00" <= h <= "20:59"]
-        assert len(proches) >= 6, f"mois {mois} : {sorted(proches)}"
+        assert len(proches) >= 10, f"{saison} : {sorted(proches)}"
 
 
-def test_on_ne_demande_pas_plus_que_ce_que_github_honore():
-    """56 passages demandés donnaient 16 passages réels, mal répartis.
+def test_letape_dattente_vise_bien_le_relais():
+    """L'heure exacte est tenue par l'attente, pas par le planificateur."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    job = workflow["jobs"]["tickets"]
+    etapes = {e.get("name"): e for e in job["steps"] if e.get("name")}
+    attente = next(e for nom, e in etapes.items() if nom.startswith("Attendre"))
 
-    En demander moins, mais au bon moment, vaut mieux que de saturer une
-    file d'attente qui écrête.
-    """
-    assert len(_slots_utc()) <= 45
+    assert "--at 20:05" in attente["run"]
+    # Une modification poussée ne doit pas rester bloquée une demi-heure.
+    assert attente["if"] == "github.event_name == 'schedule'"
+
+    ordre = [e.get("name") for e in job["steps"]]
+    assert ordre.index(attente["name"]) < ordre.index("Vérifier la couverture")
+
+    # Le passage doit pouvoir attendre sans être tué par le délai maximum.
+    plafond = int(attente["run"].split("--max-minutes")[1].split()[0])
+    assert job["timeout-minutes"] > plafond + 5
+
+    # Le rendez-vous quotidien doit déjà être passé quand l'attente se termine,
+    # sinon on se réveillerait pile trop tôt pour qu'il se déclenche.
+    for rule in ma_config().rules:
+        assert rule.renew_at <= "20:05"

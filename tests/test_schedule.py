@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -65,3 +66,39 @@ def test_creneau_par_defaut_toujours_actif():
     window = Window.parse(None)
     assert window.contains(at(3, 4, 30))
     assert window.contains(at(6, 23, 59))
+
+
+# --------------------------------------------- attendre l'heure exacte du relais
+
+from allovalet.schedule import secondes_avant  # noqa: E402
+
+PARIS_TZ = ZoneInfo("Europe/Paris")
+
+
+def _soir(heure: int, minute: int):
+    return datetime(2026, 8, 4, heure, minute, tzinfo=PARIS_TZ)
+
+
+def test_un_passage_en_avance_attend_lheure_pile():
+    assert secondes_avant("20:05", _soir(19, 40), 35) == 25 * 60
+    assert secondes_avant("20:05", _soir(20, 4), 35) == 60
+
+
+def test_un_passage_deja_en_retard_nattend_pas():
+    """Le ticket a expiré à 20h00 : chaque minute d'attente serait un trou."""
+    assert secondes_avant("20:05", _soir(20, 6), 35) == 0
+    assert secondes_avant("20:05", _soir(23, 0), 35) == 0
+
+
+def test_un_passage_trop_en_avance_rend_la_main():
+    """Sinon un passage de l'après-midi bloquerait le poste des heures durant,
+    et brûlerait les minutes d'Actions pour rien."""
+    assert secondes_avant("20:05", _soir(19, 0), 35) == 0
+    assert secondes_avant("20:05", _soir(3, 0), 35) == 0
+
+
+def test_lattente_ne_depasse_jamais_le_plafond():
+    for minute in range(0, 60):
+        for heure in (18, 19, 20, 21):
+            attente = secondes_avant("20:05", _soir(heure, minute), 35)
+            assert 0 <= attente <= 35 * 60
