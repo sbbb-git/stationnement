@@ -102,3 +102,16 @@ def test_lattente_ne_depasse_jamais_le_plafond():
         for heure in (18, 19, 20, 21):
             attente = secondes_avant("20:05", _soir(heure, minute), 35)
             assert 0 <= attente <= 35 * 60
+
+
+def test_un_creneau_de_nuit_se_referme_bien_le_matin():
+    """20h00 → 09h00 doit exclure la journée. Sans la borne de fin, le créneau
+    restait ouvert en plein après-midi."""
+    creneau = Window.parse({"from": "20:00", "to": "09:00"})
+    dedans = [(20, 30), (23, 59), (0, 30), (3, 0), (8, 59)]
+    dehors = [(9, 0), (9, 30), (12, 0), (17, 0), (19, 59)]
+
+    for heure, minute in dedans:
+        assert creneau.contains(_soir(heure, minute)), f"{heure}:{minute:02d}"
+    for heure, minute in dehors:
+        assert not creneau.contains(_soir(heure, minute)), f"{heure}:{minute:02d}"

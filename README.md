@@ -1,10 +1,9 @@
 # Stationnement automatique
 
 Un ticket **Handi toujours en cours** dans deux secteurs de Paris pour la
-plaque AB123CD : celui du **75008** et celui du **75016**. Renouvellement au
-rendez-vous de **20h01** chaque jour, rattrapage automatique si un trou
-apparaît à n'importe quelle heure, et **repli sur la zone voisine** si la zone
-voulue refuse.
+plaque AB123CD : celui du **75008** et celui du **75016**. Relais **à 20h05
+pile** chaque soir, rien avant 20h00, rattrapage pendant la nuit si un trou
+apparaît, et **repli sur la zone voisine** si la zone voulue refuse.
 
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
@@ -54,7 +53,7 @@ Pro ».
 | AlloValet | Ici |
 |---|---|
 | Identifiants PayByPhone stockés chiffrés | secrets GitHub Actions |
-| Backend qui tourne en continu | GitHub Actions, toutes les 30 min |
+| Backend qui tourne en continu | GitHub Actions, dense autour de 20h |
 | Règles véhicule / zone / type de ticket | `config.yml` |
 | Renouvellement avant expiration | idem, avec rattrapage si trou |
 | SmartPark, tableau de bord, multi-véhicules | non repris — inutile ici |
@@ -96,12 +95,15 @@ Un ticket n'est déclaré pris que lorsqu'il a été **relu depuis le serveur**.
 
 À chaque passage, une seule question : **faut-il un ticket ?**
 
-| Situation | Décision |
+Rien ne se prend **avant 20h00** : c'est la seule heure où un ticket finit
+vraiment, et un ticket pris dans la journée s'arrêterait au même 20h00.
+
+| Situation (entre 20h00 et 09h00) | Décision |
 |---|---|
-| Aucun ticket dans le secteur | on en prend un **immédiatement**, quelle que soit l'heure |
+| Aucun ticket dans le secteur | on en prend un **immédiatement** |
 | Le ticket expire dans moins de 25 min | on le reprend **avant** le trou |
 | Il est 20h01 passé et le ticket ne tient pas jusqu'à demain 20h01 | rendez-vous quotidien |
-| Sinon | rien |
+| Entre 09h00 et 20h00 | rien |
 
 « Un ticket » veut dire : sur **n'importe quelle zone du secteur**, pas
 seulement la zone préférée.
@@ -110,11 +112,22 @@ Le rendez-vous n'a lieu qu'une fois par soir. Quand une session en cours est
 renouvelable — l'API le dit elle-même avec `isRenewable` — on la renouvelle au
 lieu d'en empiler une seconde.
 
-Le workflow tourne toutes les 30 min, 24 h/24, avec un passage toutes les
-10 min autour de 20h01. Comme il se réveille à chaque `HH:01`, il tombe sur
-20h01 heure de Paris été comme hiver, sans logique de changement d'heure. Un
-trou dure donc au pire une trentaine de minutes. Environ 1 000 minutes
-d'Actions par mois, sur les 2 000 gratuites d'un dépôt privé.
+### L'heure est tenue par le programme, pas par GitHub
+
+Relevé sur quatre jours : **GitHub n'a honoré que 16 des 56 passages
+programmés** chaque jour, avec des trous de trois heures. En demander plus n'y
+change rien. Ce qui marche, c'est qu'un passage **attende** :
+
+- neuf créneaux entre 19h30 et 20h05 ; le premier honoré **dort jusqu'à 20h05**
+  puis agit — il suffit donc d'un seul ;
+- passé 20h05, plus aucune attente : le ticket a expiré, chaque minute compte.
+  Douze créneaux entre 20h et 21h servent alors de filet ;
+- une veille toutes les deux heures le reste du temps, pour le tableau de bord
+  et pour rattraper un trou nocturne.
+
+Été comme hiver : les créneaux couvrent 17h-20h UTC, ce qui encadre 20h00 de
+Paris dans les deux décalages. Environ 1 000 minutes d'Actions par mois, sur
+les 2 000 gratuites d'un dépôt privé.
 
 ---
 
@@ -248,7 +261,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-99 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+106 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.

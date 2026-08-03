@@ -64,13 +64,23 @@ def test_rendez_vous_a_20h01():
         assert rule.renew_at == "20:01"
 
 
-def test_les_regles_veillent_24h_sur_24():
-    """Pas de créneau restreint : un trou de couverture doit pouvoir être
-    rattrapé à n'importe quelle heure, y compris la nuit et le dimanche."""
+def test_rien_avant_20h():
+    """Demandé explicitement : aucun ticket pris dans la journée. Le seul
+    moment où un ticket finit est 20h00, donc c'est là que tout se joue."""
+    for rule in ma_config().rules:
+        for jour in range(7):
+            for heure in (9, 11, 14, 17, 19):
+                moment = datetime(2025, 1, 6 + jour, heure, 30, tzinfo=PARIS)
+                assert not rule.window.contains(moment), f"{moment} : agirait"
+
+
+def test_la_veille_couvre_le_soir_et_la_nuit_tous_les_jours():
+    """Après 20h00 et jusqu'au matin, un trou reste rattrapable — dimanches
+    et jours fériés compris."""
     for rule in ma_config().rules:
         assert rule.window.days == frozenset(range(7))
         for jour in range(7):
-            for heure in (0, 3, 11, 17, 20, 23):
+            for heure in (20, 21, 23, 2, 6, 8):
                 moment = datetime(2025, 1, 6 + jour, heure, 30, tzinfo=PARIS)
                 assert rule.window.contains(moment), f"{moment} non couvert"
 

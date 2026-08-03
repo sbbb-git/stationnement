@@ -123,10 +123,14 @@ class Window:
         """`moment` doit être en heure locale (tz-aware)."""
         clock = moment.time()
         if self.overnight:
-            # ex. 20:00 → 08:00 : le jour de référence est celui du démarrage
+            # ex. 20:00 → 09:00 : le jour de référence est celui du démarrage
             if clock >= self.start:
                 return moment.weekday() in self.days
-            return (moment - timedelta(days=1)).weekday() in self.days
+            # Avant l'heure de fin, on appartient encore au créneau de la veille ;
+            # après, on est en plein milieu de la journée, donc dehors.
+            if clock < self.end:
+                return (moment - timedelta(days=1)).weekday() in self.days
+            return False
         return moment.weekday() in self.days and self.start <= clock < self.end
 
     def end_after(self, moment: datetime) -> datetime:
