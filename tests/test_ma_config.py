@@ -169,19 +169,32 @@ def test_le_cron_passe_a_20h01_ete_comme_hiver():
         assert "20:01" in _heures_paris(mois), saison
 
 
-def test_un_passage_au_moins_toutes_les_30_minutes():
-    """C'est ce qui borne la durée d'un éventuel trou de couverture."""
+def test_un_passage_au_moins_toutes_les_heures():
+    """C'est ce qui borne la durée d'un trou de couverture imprévu."""
     slots = _slots_utc()
     moments = sorted(datetime(2025, 1, 1, h, m, tzinfo=UTC) for h, m in slots)
     ecarts = [
         (b - a).total_seconds() / 60
         for a, b in zip(moments, moments[1:] + [moments[0] + timedelta(days=1)])
     ]
-    assert max(ecarts) <= 30, f"trou de {max(ecarts):.0f} min entre deux passages"
+    assert max(ecarts) <= 60, f"trou de {max(ecarts):.0f} min entre deux passages"
 
 
-def test_renfort_autour_du_rendez_vous():
-    """Le moment qui compte mérite plus qu'un seul passage."""
+def test_renfort_autour_du_relais_de_20h():
+    """Le seul moment où un ticket finit vraiment mérite mieux qu'un passage.
+
+    GitHub n'honore qu'une partie des déclenchements : la densité est ce qui
+    borne le temps entre l'expiration de 20h00 et le ticket suivant.
+    """
     for mois in (1, 7):
         proches = [h for h in _heures_paris(mois) if "20:00" <= h <= "20:59"]
-        assert len(proches) >= 5, f"mois {mois} : {sorted(proches)}"
+        assert len(proches) >= 6, f"mois {mois} : {sorted(proches)}"
+
+
+def test_on_ne_demande_pas_plus_que_ce_que_github_honore():
+    """56 passages demandés donnaient 16 passages réels, mal répartis.
+
+    En demander moins, mais au bon moment, vaut mieux que de saturer une
+    file d'attente qui écrête.
+    """
+    assert len(_slots_utc()) <= 45
