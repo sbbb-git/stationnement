@@ -1,9 +1,9 @@
 # Stationnement automatique
 
-Un ticket **Handi toujours en cours** dans deux secteurs de Paris pour la
-plaque AB123CD : celui du **75008** et celui du **75016**. Relais **à 20h05
-pile** chaque soir, rien avant 20h00, rattrapage pendant la nuit si un trou
-apparaît, et **repli sur la zone voisine** si la zone voulue refuse.
+Un ticket **Handi toujours en cours** dans deux secteurs de Paris : celui du
+**75008** et celui du **75016**. Relais **à 20h05 pile** chaque soir, rien
+avant 20h00, rattrapage pendant la nuit si un trou apparaît, et **repli sur la
+zone voisine** si la zone voulue refuse.
 
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
@@ -241,7 +241,7 @@ Il n'achète rien.
 ```yaml
 rules:
   - name: Secteur 8e — Handi
-    plate: AB123CD
+    plate: ${PBP_PLATE}     # secret GitHub, pas dans le dépôt
     zones:                  # liste ORDONNÉE : la 1re est la zone voulue,
       - "75008"             # les suivantes sont les replis du même secteur
       - "75007"
@@ -291,7 +291,7 @@ créés, vérifiés en les relisant depuis le compte :
 
 ```
 === 17 ticket(s) créé(s) ===
-  • zone 75001 … 75020  AB123CD  CUSTOM  jusqu'à 31/07 20:00 ← NOUVEAU
+  • zone 75001 … 75020  <plaque>  CUSTOM  jusqu'à 31/07 20:00 ← NOUVEAU
 ```
 
 | Étape | État |

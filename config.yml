@@ -20,7 +20,7 @@ notify:
 
 rules:
   - name: Secteur 8e — Handi
-    plate: AB123CD
+    plate: ${PBP_PLATE}      # secret GitHub — la plaque n'est pas dans le dépôt
     zones:
       - "75008"   # la zone voulue
       - "75007"   # puis les replis, en descendant
@@ -39,10 +39,10 @@ rules:
     max_cost_per_ticket: 0
     window:                 # ne rien prendre avant 20h00
       from: "20:00"
-      to: "09:00"           # …et rattraper un trou pendant la nuit    # garde-fou : n'achète que si c'est gratuit
+      to: "09:00"           # …et rattraper un trou pendant la nuit
 
   - name: Secteur 16e — Handi
-    plate: AB123CD
+    plate: ${PBP_PLATE}      # secret GitHub — la plaque n'est pas dans le dépôt
     zones:
       - "75016"   # la zone voulue
       - "75017"   # puis les replis, en montant

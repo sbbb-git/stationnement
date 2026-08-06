@@ -19,73 +19,83 @@ Puis, dans **votre** copie, onglet **Actions** → bouton
 **I understand my workflows, go ahead and enable them**. GitHub désactive les
 automatisations d'un fork par sécurité, il faut le lui autoriser une fois.
 
-## 2. Donner ses identifiants PayByPhone
+## 2. Donner ses identifiants et sa plaque
 
 **Settings** → **Secrets and variables** → **Actions** → **New repository
-secret**. Deux secrets à créer :
+secret**. Trois secrets à créer :
 
 | Nom | Valeur |
 |---|---|
 | `PBP_USERNAME` | le téléphone du compte PayByPhone, **avec l'indicatif** : `+33612345678` (ou l'email) |
 | `PBP_PASSWORD` | le mot de passe du compte |
+| `PBP_PLATE` | la plaque, sans espaces ni tirets : `AB123CD` |
+
+La plaque est un secret elle aussi : sinon elle serait écrite en clair dans
+`config.yml`, et donc lisible par tous le jour où le dépôt devient public.
 
 Un secret n'est visible de personne — pas même de vous après coup, ni dans les
 journaux. C'est le même principe que l'application AlloValet, qui stocke les
 identifiants PayByPhone de ses abonnés chiffrés.
 
-## 3. Trouver l'identifiant de son tarif
+## 3. Choisir ses arrondissements
 
-Onglet **Actions** → workflow **Découverte** → **Run workflow**. Indiquer la
-zone (le numéro affiché sur l'horodateur, ex. `75016`) et la plaque.
-
-Le résultat s'affiche en tête du passage :
-
-```
-  • type=CUSTOM  « Handi - toutes zones »  (ratePolicyId 1321271030, unités Days)
-  • type=VIS     « Visiteur »              (ratePolicyId 75016, unités Minutes/Hours)
-```
-
-Noter le `ratePolicyId` de la ligne voulue. Si la liste est vide, la plaque
-n'est pas enregistrée sur le compte PayByPhone, ou la zone n'existe pas.
-
-## 4. Écrire ses règles
-
-**Code** → `config.yml` → l'icône **crayon**. Une règle par secteur :
+**Code** → `config.yml` → l'icône **crayon**. C'est la **seule** chose à
+changer : les zones. Tout le reste est déjà réglé pour le tarif Handi
+parisien, gratuit.
 
 ```yaml
 rules:
   - name: Chez moi
-    plate: AB123CD           # sa plaque, sans espaces
+    plate: ${PBP_PLATE}      # ne pas toucher : vient du secret
     zones:                   # liste ORDONNÉE : la 1re est la zone voulue,
       - "75016"              # les suivantes sont des replis du même secteur
       - "75017"
       - "75018"
-    rate: "1321271030"       # le ratePolicyId de l'étape 3
+    rate: "1321271030"       # « Handi - toutes zones » : déjà bon à Paris
     duration: 24h
-    renew_at: "20:05"        # l'heure du relais quotidien
+    renew_at: "20:01"
     max_cost_per_ticket: 0   # 0 = n'achète que si c'est gratuit
     window:
       from: "20:00"          # ne rien prendre avant cette heure
       to: "09:00"
 ```
 
-**`max_cost_per_ticket: 0` est le garde-fou** : à zéro, le programme n'achètera
-jamais rien de payant, quoi qu'il arrive. Ne le changer qu'en sachant ce qu'on
-fait — un tarif visiteur peut coûter plusieurs dizaines d'euros par jour.
+Le fichier livré contient deux règles, une par secteur. En garder une seule ?
+Supprimer l'autre bloc. En vouloir une troisième ? Recopier le bloc.
 
-Les zones de repli doivent appartenir au **même secteur** : un ticket sur l'une
-d'elles compte comme couverture de toute la règle. Une seule zone ? Écrire
-`location: "75016"` et supprimer `zones:`.
+Deux points à comprendre :
+
+- **Les zones de repli doivent appartenir au même secteur.** Un ticket sur
+  l'une d'elles compte comme couverture de toute la règle : si le 75016 refuse,
+  le 75017 fera l'affaire. Mettre le secteur entier rend le trou improbable.
+- **`max_cost_per_ticket: 0` est le garde-fou.** À zéro, le programme
+  n'achètera jamais rien de payant, quoi qu'il arrive. Ne pas y toucher : un
+  tarif visiteur peut coûter plusieurs dizaines d'euros par jour.
 
 En bas de page, **Commit changes**.
 
-## 5. Vérifier
+*Si le tarif Handi n'apparaît pas (étape 4), c'est l'occasion de le vérifier :
+Actions → **Découverte** → Run workflow liste les tarifs réellement
+disponibles sur une zone, avec leur `ratePolicyId` à recopier dans `rate:`.*
+
+## 4. Vérifier
 
 Onglet **Actions** → **Découverte** → **Run workflow**. La seconde partie du
 résultat est un diagnostic complet : connexion, plaque présente sur le compte,
 et pour chaque règle une zone qui donne un devis **gratuit**. Il n'achète rien.
 
 Tant qu'il n'affiche pas `Tout est prêt ✅`, l'automatisation ne servira à rien.
+
+Les deux échecs les plus courants, dans l'ordre :
+
+| Ce qu'affiche le diagnostic | Ce qu'il faut faire |
+|---|---|
+| `Connexion refusée` | l'identifiant est le **téléphone avec l'indicatif** (`+336…`) ou l'email — pas le numéro seul |
+| `aucun tarif` / `plaque absente du compte` | la **carte mobilité inclusion doit être enregistrée sur le compte PayByPhone**, pour cette plaque. Ça se fait dans l'application PayByPhone, pas ici. |
+
+Le second est le vrai prérequis : sans la CMI attachée au véhicule côté
+PayByPhone, le tarif Handi n'existe simplement pas, et rien de tout ceci ne
+peut fonctionner.
 
 ---
 

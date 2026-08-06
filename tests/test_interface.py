@@ -171,8 +171,9 @@ def test_le_runner_et_linterface_disent_la_meme_chose(config_path, client, serve
     assert vue["regles"][0]["action"] in rapport.results[0].message
 
 
-def test_la_config_livree_se_lit_dans_linterface(client, server):
+def test_la_config_livree_se_lit_dans_linterface(client, server, monkeypatch):
     """Le fichier réellement utilisé, pas un exemple."""
+    monkeypatch.setenv("PBP_PLATE", PLATE)
     vue = snapshot(Config.load(Path(__file__).resolve().parents[1] / "config.yml"), client)
 
     assert [r["preferee"] for r in vue["regles"]] == ["75008", "75016"]

@@ -60,7 +60,14 @@ class Rule:
             raise ConfigError(f"règle #{index + 1} : doit être un objet")
         nom = data.get("name", "sans nom")
         if not data.get("plate"):
-            raise ConfigError(f"règle #{index + 1} ({nom}) : champ `plate` manquant")
+            # Le cas le plus courant : la plaque vient d'un secret, et le secret
+            # n'existe pas encore. Le dire plutôt que de parler d'un champ
+            # manquant, qui enverrait chercher au mauvais endroit.
+            raise ConfigError(
+                f"règle #{index + 1} ({nom}) : pas de plaque. Si `config.yml` "
+                "contient `plate: ${PBP_PLATE}`, c'est que le secret PBP_PLATE "
+                "n'est pas défini — Settings → Secrets and variables → Actions."
+            )
         zones = cls._zones(data, index, nom)
         rule = cls(
             name=str(data.get("name") or f"règle {index + 1}"),

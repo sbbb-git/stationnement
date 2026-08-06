@@ -10,24 +10,49 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 import yaml
 
-from allovalet.config import Config
+from allovalet.config import Config, ConfigError
 
 ROOT = Path(__file__).resolve().parents[1]
 PARIS = ZoneInfo("Europe/Paris")
 UTC = ZoneInfo("UTC")
 
 
+PLAQUE = "AB123CD"
+
+
+@pytest.fixture(autouse=True)
+def _plaque(monkeypatch):
+    """La plaque vit dans un secret : sans lui, la config ne se lit pas."""
+    monkeypatch.setenv("PBP_PLATE", PLAQUE)
+
+
 def ma_config() -> Config:
     return Config.load(ROOT / "config.yml")
+
+
+def test_la_plaque_nest_pas_ecrite_dans_le_depot(monkeypatch):
+    """Elle vient du secret PBP_PLATE. Un dépôt qui devient public — ça arrive —
+    ne doit pas révéler quelle voiture se gare où."""
+    texte = (ROOT / "config.yml").read_text(encoding="utf-8")
+    assert PLAQUE not in texte
+    assert "${PBP_PLATE}" in texte
+    assert {r.plate for r in ma_config().rules} == {PLAQUE}
+
+    # Et sans le secret, l'erreur doit désigner le secret, pas un champ absent.
+    monkeypatch.delenv("PBP_PLATE")
+    with pytest.raises(ConfigError) as echec:
+        ma_config()
+    assert "PBP_PLATE" in str(echec.value)
 
 
 def test_une_regle_par_secteur():
     """Deux secteurs, chacun visant sa zone : le 75008 et le 75016."""
     rules = ma_config().rules
     assert [r.location for r in rules] == ["75008", "75016"]
-    assert {r.plate for r in rules} == {"AB123CD"}
+    assert {r.plate for r in rules} == {PLAQUE}
     assert {r.rate for r in rules} == {"1321271030"}
     assert not any(r.toutes_zones for r in rules)
     assert all(r.enabled for r in rules)
@@ -283,7 +308,10 @@ def test_le_mode_demploi_reste_juste():
     """Un mode d'emploi qui ment coûte plus cher que pas de mode d'emploi."""
     texte = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
     assert "PBP_USERNAME" in texte and "PBP_PASSWORD" in texte
+    assert "PBP_PLATE" in texte                   # la plaque aussi est un secret
+    assert "1321271030" in texte                  # le tarif Handi, déjà rempli
+    assert "mobilité inclusion" in texte.lower()  # le vrai prérequis
     assert "max_cost_per_ticket: 0" in texte      # le garde-fou doit être expliqué
     assert "Découverte" in texte                  # le nom réel du workflow
-    for champ in ("plate:", "zones:", "rate:", "renew_at:", "window:"):
+    for champ in ("zones:", "rate:", "renew_at:", "window:"):
         assert champ in texte, champ
