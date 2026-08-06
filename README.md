@@ -8,6 +8,10 @@ apparaît, et **repli sur la zone voisine** si la zone voulue refuse.
 Construit sur le modèle d'[AlloValet](https://allovalet.com/), pour un usage
 strictement personnel.
 
+**Pour l'installer avec une autre voiture et un autre compte PayByPhone :
+[INSTALLATION.md](INSTALLATION.md)** — dix minutes, dans le navigateur, sans
+rien installer.
+
 ---
 
 ## Les deux secteurs, et leurs replis
@@ -261,7 +265,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-106 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+113 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.

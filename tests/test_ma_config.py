@@ -257,3 +257,33 @@ def test_letape_dattente_vise_bien_le_relais():
     # sinon on se réveillerait pile trop tôt pour qu'il se déclenche.
     for rule in ma_config().rules:
         assert rule.renew_at <= "20:05"
+
+
+# ------------------------------------------------- installation par un tiers
+
+
+def test_la_decouverte_nachete_jamais_rien():
+    """Ce workflow sert à configurer le sien : il tourne avec les identifiants
+    de quelqu'un qui n'a encore rien vérifié. Il doit être en lecture seule."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/decouverte.yml").read_text())
+    declencheurs = workflow[True] if True in workflow else workflow["on"]
+
+    # À la demande uniquement : ni horaire, ni déclenchement par un commit.
+    assert list(declencheurs) == ["workflow_dispatch"]
+
+    commandes = " ".join(
+        etape.get("run") or "" for etape in workflow["jobs"]["tarifs"]["steps"]
+    )
+    for achat in ("allovalet run", "allovalet park", "allovalet sweep"):
+        assert achat not in commandes, achat
+    assert "allovalet rates" in commandes and "allovalet doctor" in commandes
+
+
+def test_le_mode_demploi_reste_juste():
+    """Un mode d'emploi qui ment coûte plus cher que pas de mode d'emploi."""
+    texte = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
+    assert "PBP_USERNAME" in texte and "PBP_PASSWORD" in texte
+    assert "max_cost_per_ticket: 0" in texte      # le garde-fou doit être expliqué
+    assert "Découverte" in texte                  # le nom réel du workflow
+    for champ in ("plate:", "zones:", "rate:", "renew_at:", "window:"):
+        assert champ in texte, champ

@@ -1,0 +1,62 @@
+# Le seul outil dont on a besoin pour configurer le sien : il donne les
+# identifiants de tarif d'une zone, qu'on recopie ensuite dans `config.yml`.
+# Se lance depuis le navigateur, sans rien installer. N'achète jamais rien.
+name: Découverte
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: "Numéro affiché sur l'horodateur (ex. 75016)"
+        required: true
+        default: "75016"
+      plaque:
+        description: "Plaque, sans espaces (ex. AB123CD)"
+        required: true
+
+concurrency:
+  group: decouverte
+
+permissions:
+  contents: read
+
+jobs:
+  tarifs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Tarifs disponibles sur la zone
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+        run: |
+          echo "## Tarifs — zone ${{ inputs.zone }}, plaque ${{ inputs.plaque }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python -m allovalet rates --zone "${{ inputs.zone }}" \
+                                    --plate "${{ inputs.plaque }}" \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Recopier le \`ratePolicyId\` voulu dans \`config.yml\` (\`rate:\`)." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # Le diagnostic complet, une fois la config remplie : il vérifie la
+      # connexion, la plaque, puis pour chaque règle qu'une zone donne bien un
+      # devis gratuit. C'est le feu vert avant de laisser tourner tout seul.
+      - name: Diagnostic de la configuration
+        if: always()
+        env:
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+        run: |
+          echo "## Diagnostic de \`config.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python -m allovalet doctor 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
