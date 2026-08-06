@@ -122,3 +122,44 @@ def test_choix_de_lunite_de_duree():
     assert str(best_duration(90, ["Minutes", "Hours"])) == "90 Minutes"
     assert str(best_duration(120, ["Minutes", "Hours"])) == "2 Hours"
     assert str(best_duration(45, ["Hours"])) == "1 Hours"  # arrondi au-dessus
+
+
+# ------------------------------------- le filtre anti-robot de PayByPhone
+
+def test_un_403_du_pare_feu_est_reessaye(client, server, monkeypatch):
+    """PayByPhone renvoie parfois une page HTML « 403 ERROR » à une IP de
+    datacenter. Ce n'est pas un refus d'identifiants : ça retombe tout seul,
+    et abandonner à la première laisse la voiture sans ticket toute la nuit."""
+    monkeypatch.setattr(PayByPhoneClient, "AUTH_PAUSES", (0, 0, 0))
+    server.filtre_cloudfront = 2  # deux rejets, puis ça passe
+
+    client.authenticate()
+
+    assert client.member_id
+    assert len(server.token_calls) == 3
+
+
+def test_un_403_persistant_ne_se_fait_pas_passer_pour_un_mot_de_passe_faux(
+    client, server, monkeypatch
+):
+    """Le message doit désigner le vrai coupable, sinon on passe la soirée à
+    vérifier des identifiants qui étaient bons."""
+    monkeypatch.setattr(PayByPhoneClient, "AUTH_PAUSES", (0, 0, 0))
+    server.filtre_cloudfront = 99
+
+    with pytest.raises(AuthError) as echec:
+        client.authenticate()
+
+    assert "403" in str(echec.value)
+    assert "pas un problème d'identifiants" in str(echec.value)
+
+
+def test_un_vrai_mauvais_mot_de_passe_nest_pas_reessaye(server, monkeypatch):
+    """Réessayer trois fois un mot de passe faux ne sert qu'à se faire bloquer."""
+    monkeypatch.setattr(PayByPhoneClient, "AUTH_PAUSES", (0, 0, 0))
+    muet = PayByPhoneClient(username="+33600000000", password="mauvais")
+
+    with pytest.raises(AuthError):
+        muet.authenticate()
+
+    assert len(server.token_calls) == 1

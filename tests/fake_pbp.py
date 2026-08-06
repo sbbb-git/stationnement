@@ -93,6 +93,7 @@ class FakePayByPhone:
         self.operations: list[str] = []
         self.swallow_purchases = False   # « acheté » mais aucune session créée
         self.reject_duplicate = False    # zone refusant une 2e session
+        self.filtre_cloudfront = 0       # nb de connexions rejetées en 403 HTML
         self.accept_flat_input = False  # le vrai n'accepte que input: {request: {...}}
         self.token_calls: list[dict] = []
         self.issued_tokens: set[str] = set()  # un jeton inconnu = 401, comme en vrai
@@ -186,6 +187,15 @@ def _make_handler(state: FakePayByPhone):
             self.end_headers()
             self.wfile.write(body)
 
+        def _html(self, texte: str, status: int):
+            """Une page d'erreur HTML, comme un pare-feu en renvoie."""
+            body = texte.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _data(self, field, value):
             return self._json({"data": {field: value}})
 
@@ -219,9 +229,21 @@ def _make_handler(state: FakePayByPhone):
         def _token(self):
             body = self._body()
             state.token_calls.append(body)
+            # Le CloudFront de PayByPhone renvoie parfois une page HTML 403 à
+            # une IP de datacenter. Ce n'est pas un refus d'identifiants.
+            if state.filtre_cloudfront > 0:
+                state.filtre_cloudfront -= 1
+                return self._html(
+                    "<HTML><HEAD><TITLE>ERROR: The request could not be satisfied"
+                    "</TITLE></HEAD><BODY><H1>403 ERROR</H1></BODY></HTML>", 403
+                )
             grant = body.get("grant_type")
             if grant == "password" and not (body.get("username") and body.get("password")):
                 return self._json({"error": "invalid_grant"}, 400)
+            if body.get("password") == "mauvais":   # refus net, pas un filtre
+                return self._json(
+                    {"error": "invalid_grant", "error_description": "bad credentials"}, 400
+                )
             if grant == "refresh_token" and body.get("refresh_token") != "valid-refresh":
                 return self._json(
                     {"error": "invalid_grant", "error_description": "expired"}, 400

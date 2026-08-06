@@ -99,7 +99,17 @@ def markdown(vue: dict, depot: str | None = None) -> str:
     l'affiche en tête de chaque passage, et une issue en garde en permanence
     la dernière version. `depot` (« proprio/nom ») ajoute les liens d'action.
     """
-    lignes = ["## 🅿️ Stationnement", ""]
+    # La date en tête, pas en pied : quand plus aucun passage n'aboutit, le
+    # tableau se fige sans rien dire. La seule façon de s'en apercevoir est de
+    # voir tout de suite qu'il date.
+    lignes = [
+        "## 🅿️ Stationnement",
+        "",
+        f"*Relevé le {vue['genere'][8:10]}/{vue['genere'][5:7]} à "
+        f"{vue['genere'][11:16]}.* Un tableau qui date de plus de deux heures "
+        "veut dire qu'aucun passage n'aboutit.",
+        "",
+    ]
     if vue["erreur"]:
         lignes += [f"> ⚠️ lecture du compte impossible : `{vue['erreur']}`", ""]
 
@@ -136,8 +146,5 @@ def markdown(vue: dict, depot: str | None = None) -> str:
             "",
         ]
 
-    lignes.append(
-        f"_{len(vue['tickets'])} ticket(s) en cours · mis à jour tout seul · "
-        f"{vue['genere'][:16].replace('T', ' à ')}_"
-    )
+    lignes.append(f"_{len(vue['tickets'])} ticket(s) en cours · mis à jour tout seul_")
     return "\n".join(lignes)

@@ -195,17 +195,44 @@ def test_un_passage_au_moins_toutes_les_deux_heures():
 def test_des_passages_en_avance_pouvant_attendre_le_relais():
     """Le mécanisme repose là-dessus : il suffit qu'**un** passage arrive dans
     la demi-heure qui précède 20h05 pour que le relais tombe pile à l'heure.
-    Plus il y en a, plus il est probable que GitHub en honore un."""
+
+    Ils doivent tomber dans la fenêtre d'attente réellement configurée, sinon
+    ils agiraient trop tôt (ticket encore valide) ou trop tard."""
+    plafond = _plafond_dattente()
     for mois, saison in ((7, "été"), (1, "hiver")):
-        avance = [h for h in _heures_paris(mois) if "19:30" <= h <= "20:05"]
-        assert len(avance) >= 6, f"{saison} : {sorted(avance)}"
+        debut = f"{20 - (plafond + 55) // 60:02d}:{(65 - plafond) % 60:02d}"
+        avance = [h for h in _heures_paris(mois) if debut <= h <= "20:05"]
+        assert len(avance) >= 4, f"{saison} : {sorted(avance)} (depuis {debut})"
 
 
 def test_le_relais_est_dense_apres_20h():
     """Et si aucun passage en avance n'est honoré, il faut rattraper vite."""
     for mois, saison in ((7, "été"), (1, "hiver")):
         proches = [h for h in _heures_paris(mois) if "20:00" <= h <= "20:59"]
-        assert len(proches) >= 10, f"{saison} : {sorted(proches)}"
+        assert len(proches) >= 6, f"{saison} : {sorted(proches)}"
+
+
+def test_pas_trop_de_passages_rapproches():
+    """Deux échecs ont la même cause : trop de déclenchements. Ils se sont
+    annulés les uns les autres dans la file d'attente le 06/08, et PayByPhone
+    a fini par filtrer les connexions trop rapprochées (403 CloudFront)."""
+    slots = _slots_utc()
+    assert len(slots) <= 40, f"{len(slots)} passages demandés par jour"
+
+
+def test_un_passage_qui_attend_cede_la_place_au_suivant():
+    """Sinon les passages du soir s'empilent, et GitHub annule ceux qui
+    patientent avant même de leur donner une machine — la panne du 06/08."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    assert workflow["concurrency"]["cancel-in-progress"] is True
+
+
+def _plafond_dattente() -> int:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    for etape in workflow["jobs"]["tickets"]["steps"]:
+        if "--max-minutes" in (etape.get("run") or ""):
+            return int(etape["run"].split("--max-minutes")[1].split()[0])
+    raise AssertionError("aucune étape d'attente")
 
 
 def test_letape_dattente_vise_bien_le_relais():

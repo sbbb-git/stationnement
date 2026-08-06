@@ -339,33 +339,53 @@ class PayByPhoneClient:
                 "expires_at": self._expires_at.isoformat(),
             })
 
+    # Le portail de PayByPhone est derrière un CloudFront qui répond parfois
+    # « 403 The request could not be satisfied » en HTML à une IP de
+    # datacenter. Ce n'est pas un refus d'identifiants — c'est un filtre, et
+    # il retombe tout seul. Les codes ci-dessous méritent donc d'être réessayés.
+    AUTH_RETRY = (403, 408, 425, 429, 500, 502, 503, 504)
+    AUTH_PAUSES = (5, 20, 60)
+
     def login(self) -> None:
         if not (self.username and self.password):
             raise AuthError("PBP_USERNAME / PBP_PASSWORD manquants.")
         log.info("Connexion PayByPhone (%s)…", self.username)
-        resp = self.http.post(
-            AUTH_URL,
-            headers=self._auth_headers(),
-            data={
-                "grant_type": "password",
-                "username": self.username,
-                "password": self.password,
-                "client_id": CLIENT_ID,
-            },
-        )
-        if resp.status_code != 200:
-            detail = ""
-            try:
-                body = resp.json()
-                detail = body.get("error_description") or body.get("error") or ""
-            except ValueError:
-                detail = resp.text[:300]
-            raise AuthError(
-                "Connexion refusée — vérifie l'identifiant (numéro avec indicatif "
-                f"« +336… » ou email) et le mot de passe.\n↳ {detail}"
+        donnees = {
+            "grant_type": "password",
+            "username": self.username,
+            "password": self.password,
+            "client_id": CLIENT_ID,
+        }
+        for essai, pause in enumerate((*self.AUTH_PAUSES, None)):
+            resp = self.http.post(AUTH_URL, headers=self._auth_headers(), data=donnees)
+            if resp.status_code == 200:
+                self._store_tokens(resp.json())
+                log.info("Connecté ✅")
+                return
+            if pause is None or resp.status_code not in self.AUTH_RETRY:
+                break
+            log.warning(
+                "Connexion rejetée (HTTP %s) — filtre passager, nouvel essai dans %s s "
+                "(%s/%s).", resp.status_code, pause, essai + 1, len(self.AUTH_PAUSES),
             )
-        self._store_tokens(resp.json())
-        log.info("Connecté ✅")
+            time.sleep(pause)
+
+        detail = ""
+        try:
+            body = resp.json()
+            detail = body.get("error_description") or body.get("error") or ""
+        except ValueError:
+            detail = " ".join(resp.text.split())[:200]
+        if resp.status_code in self.AUTH_RETRY:
+            raise AuthError(
+                f"PayByPhone a refusé la connexion (HTTP {resp.status_code}) malgré "
+                f"{len(self.AUTH_PAUSES)} nouvelles tentatives. Ce n'est pas un problème "
+                f"d'identifiants mais un filtre côté PayByPhone.\n↳ {detail}"
+            )
+        raise AuthError(
+            "Connexion refusée — vérifie l'identifiant (numéro avec indicatif "
+            f"« +336… » ou email) et le mot de passe.\n↳ {detail}"
+        )
 
     def refresh(self) -> None:
         if not self.refresh_token:

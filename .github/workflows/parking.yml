@@ -9,10 +9,11 @@ on:
     # Veille toutes les deux heures : rattrape un trou imprévu, et laisse la
     # place (et les minutes) au créneau du soir, qui est le seul qui compte.
     - cron: "1 */2 * * *"
-    # Le relais de 20h00, à fond : un passage toutes les 5 min. 17h-20h UTC
-    # couvre 19h-22h Paris l'été et 18h-21h l'hiver — l'heure du relais est
-    # encadrée dans les deux cas, avec de l'avance pour pouvoir l'attendre.
-    - cron: "*/5 17-20 * * *"
+    # Le relais de 20h00 : un passage toutes les 10 min. Pas plus — chaque
+    # déclenchement remplace le précédent (voir `concurrency`), et trop de
+    # connexions rapprochées finissaient par se faire filtrer par PayByPhone.
+    # 17h-20h UTC couvre 19h-22h Paris l'été et 18h-21h l'hiver.
+    - cron: "5,15,25,35,45,55 17-20 * * *"
   # Chaque correction poussée sur main déclenche un passage réel : c'est ce qui
   # permet de vérifier une modification sans attendre le prochain créneau.
   # Sans risque de dépense : `max_cost_per_ticket: 0` n'autorise que le gratuit.
@@ -29,9 +30,15 @@ on:
         type: boolean
         default: false
 
+# Un seul passage à la fois — deux qui achètent en même temps feraient un
+# doublon. `cancel-in-progress: true` : quand un passage attend l'heure du
+# relais, le suivant doit prendre sa place plutôt que de s'empiler derrière.
+# Avec `false`, les passages du soir se retrouvaient en file et GitHub les
+# annulait avant même de leur donner une machine — d'où la soirée manquée
+# du 06/08.
 concurrency:
   group: stationnement
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -40,8 +47,10 @@ permissions:
 jobs:
   tickets:
     runs-on: ubuntu-latest
-    # 35 min d'attente possible avant le relais, plus le passage lui-même.
-    timeout-minutes: 45
+    # 30 min d'attente possible avant le relais, plus le passage lui-même.
+    # Court exprès : un passage qui attend occupe le poste, et les autres
+    # attendent derrière.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -65,12 +74,12 @@ jobs:
       # Le vrai remède au planificateur de GitHub : un passage déclenché en
       # avance attend l'heure exacte au lieu d'agir trop tôt (le ticket court
       # encore) ou de laisser le suivant arriver trop tard. Il suffit donc
-      # qu'**un seul** des passages de 19h30-20h05 soit honoré pour que le
+      # qu'**un seul** des passages de 19h35-20h05 soit honoré pour que le
       # relais tombe à 20h05 pile. Au-delà du plafond, aucune attente : le
       # passage fait son travail normalement.
       - name: Attendre le relais de 20h05
         if: github.event_name == 'schedule'
-        run: python -m allovalet wait --at 20:05 --max-minutes 35
+        run: python -m allovalet wait --at 20:05 --max-minutes 30
 
       - name: Vérifier la couverture
         id: passage
