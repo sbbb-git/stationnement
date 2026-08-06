@@ -81,3 +81,21 @@ def test_rates_donne_le_libelle_a_mettre_dans_la_config(env, capsys):
 def test_schema_donne_la_forme_attendue(env, capsys):
     assert main(env + ["schema", "--type", "StartParkingSessionV1Input"]) == 0
     assert "request" in capsys.readouterr().out
+
+
+def test_park_refuse_un_ticket_payant(env, capsys, server):
+    """`--yes` veut dire « ne me demande pas », pas « à n'importe quel prix »."""
+    code = main(env + ["park", "--zone", "75016", "--duration", "2h",
+                       "--rate", "VIS", "--yes"])
+
+    assert code == 1
+    assert "dépasse le plafond" in capsys.readouterr().out
+    assert server.active() == []
+
+
+def test_park_prend_le_tarif_de_la_config_par_defaut(env, capsys, server):
+    """Sans `--rate`, prendre le premier tarif venu achèterait du visiteur."""
+    assert main(env + ["park", "--zone", "75016", "--duration", "24h", "--yes"]) == 0
+
+    assert "Ticket confirmé" in capsys.readouterr().out
+    assert len(server.active()) == 1

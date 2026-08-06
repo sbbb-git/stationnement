@@ -153,14 +153,28 @@ def cmd_rates(args) -> int:
 
 
 def cmd_park(args) -> int:
+    """Un ticket tout de suite, sur une zone choisie.
+
+    Les valeurs par défaut viennent de la config — sans quoi `--yes` achèterait
+    le premier tarif venu de la zone, qui est souvent le tarif visiteur.
+    """
     cfg, state, client = _context(args)
     plate = args.plate or cfg.rules[0].plate
-    rate = client.pick_rate_option(args.zone, plate, args.rate)
+    voulu = args.rate or (cfg.rules[0].rate if cfg.rules else None)
+    rate = client.pick_rate_option(args.zone, plate, voulu)
     duration = best_duration(parse_duration(args.duration), rate.accepted_time_units)
 
     quote = client.quote(args.zone, plate, duration, rate_option_id=rate.id)
     print(f"\n{plate} · zone {args.zone} · {rate.type or rate.name} · {duration}"
           f"  →  {money(quote.cost, quote.currency)}")
+
+    # Le même garde-fou que les règles automatiques : `--yes` dit « ne me
+    # demande pas », pas « achète à n'importe quel prix ».
+    if quote.cost > args.max_cost + 1e-9:
+        print(f"⛔ Refusé : {money(quote.cost, quote.currency)} dépasse le plafond "
+              f"{money(args.max_cost)} (`--max-cost`).\n")
+        return 1
+
     if not args.yes and input("Confirmer l'achat ? [o/N] ").strip().lower() not in ("o", "oui"):
         print("Annulé.")
         return 1
@@ -501,6 +515,8 @@ def build_parser() -> argparse.ArgumentParser:
     park.add_argument("--rate")
     park.add_argument("--plate")
     park.add_argument("--yes", action="store_true")
+    park.add_argument("--max-cost", type=float, default=0.0,
+                      help="plafond ; 0 = n'achète que si c'est gratuit")
     park.set_defaults(func=cmd_park)
 
     probe = sub.add_parser("probe", help="sonde complète de l'API (n'achète rien)")

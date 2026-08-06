@@ -315,3 +315,22 @@ def test_le_mode_demploi_reste_juste():
     assert "Découverte" in texte                  # le nom réel du workflow
     for champ in ("zones:", "rate:", "renew_at:", "window:"):
         assert champ in texte, champ
+
+
+def test_le_ticket_a_la_demande_ne_peut_pas_couter():
+    """Un marqueur dans un message de commit déclenche un achat réel. Deux
+    choses doivent donc être vraies : il ne peut être ni payant, ni détourné."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
+    etapes = {e.get("name"): e for e in workflow["jobs"]["tickets"]["steps"] if e.get("name")}
+    etape = etapes["Ticket à la demande"]
+
+    assert "github.event_name == 'push'" in etape["if"]
+    assert "contains(github.event.head_commit.message, '[ticket " in etape["if"]
+
+    # Le message de commit est du texte libre : il passe par l'environnement,
+    # jamais interpolé dans la commande.
+    assert "${{ github.event.head_commit.message }}" not in etape["run"]
+    assert etape["env"]["MESSAGE"] == "${{ github.event.head_commit.message }}"
+
+    # `park` sans `--max-cost` plafonne à 0 € : aucun achat payant possible.
+    assert "--max-cost" not in etape["run"]

@@ -147,6 +147,30 @@ jobs:
           echo "Échec volontaire — vérification que l'alerte s'ouvre."
           exit 1
 
+      # Un ticket sur une zone précise, à la demande : il suffit d'écrire
+      # [ticket 75001] dans le message du commit. Sert à essayer une zone sans
+      # attendre le relais du soir, et sans terminal.
+      #
+      # Le message passe par l'environnement, jamais dans la commande : un
+      # message de commit est du texte libre, l'interpoler serait une porte
+      # ouverte. Et `park` refuse tout ticket payant (plafond à 0 par défaut).
+      - name: Ticket à la demande
+        if: always() && github.event_name == 'push' && contains(github.event.head_commit.message, '[ticket ')
+        env:
+          MESSAGE:      ${{ github.event.head_commit.message }}
+          PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
+          PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
+          PBP_PLATE:    ${{ secrets.PBP_PLATE }}
+        run: |
+          ZONE=$(printf '%s' "$MESSAGE" | sed -n 's/.*\[ticket \([0-9]\{5\}\)\].*/\1/p' | head -1)
+          if [ -z "$ZONE" ]; then
+            echo "Marqueur mal formé — attendu : [ticket 75001]"
+            exit 1
+          fi
+          echo "Ticket demandé sur la zone $ZONE"
+          python -m allovalet park --zone "$ZONE" --yes
+          python -m allovalet status
+
       # Balayage des arrondissements, déclenché uniquement par un message de
       # commit contenant [sweep]. Aucun achat payant n'est possible.
       - name: Balayage des zones
