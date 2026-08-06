@@ -33,7 +33,8 @@ rules:
       - "75009"
       - "75010"
       - "75011"
-    rate: "1321271030"        # « Handi - toutes zones », relevé sur le compte
+    rate: "1321271030"        # « Handi - toutes zones » — même identifiant
+                              # pour tout le monde à Paris
     duration: 24h
     renew_at: "20:01"
     max_cost_per_ticket: 0
