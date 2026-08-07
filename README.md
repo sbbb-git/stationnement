@@ -174,6 +174,22 @@ Le déclencheur reste en place mais dormant : il n'agit que si le message de
 commit contient `[test-alerte]`. Un test verrouille cette condition, pour
 qu'un échec volontaire ne puisse jamais survenir sur un passage ordinaire.
 
+### Et quand c'est le workflow lui-même qui ne tourne plus
+
+Toutes ces alertes vivent **dans** `parking.yml`. Elles ne servent donc à rien
+le jour où c'est lui qui ne s'exécute plus : ni échec, ni alerte, ni ligne dans
+l'historique — il ne se passe simplement plus rien. C'est arrivé le 07/08/2026
+(une clé YAML en double, fichier refusé par GitHub) et ça a coûté une journée
+entière sans ticket.
+
+D'où un second workflow, `veille.yml`, qui ne surveille qu'une chose : **le
+silence**. Quatre fois par jour il demande « à quand remonte le dernier passage
+réussi ? » et ouvre une issue si la réponse dépasse 8 h. Il est délibérément
+minuscule et ne partage rien avec ce qu'il surveille — pas de Python, pas
+d'identifiants, aucune dépendance : tout point commun serait un angle mort. Son
+réveil du matin signale un relais du soir manqué **avant** le retour du payant
+à 9 h.
+
 ---
 
 ## L'interface
@@ -265,7 +281,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-114 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+123 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.

@@ -1,0 +1,98 @@
+# Le garde-fou de dernier recours : il surveille le silence.
+#
+# Toutes les alertes du projet vivent dans `parking.yml`. Elles ne servent donc
+# à rien le jour où c'est `parking.yml` lui-même qui ne tourne plus — fichier
+# refusé par GitHub, planificateur en panne, Actions désactivé. Ce jour-là,
+# aucun échec n'est signalé nulle part : il ne se passe simplement plus rien.
+# C'est arrivé le 07/08/2026, et ça a coûté une journée entière sans ticket.
+#
+# Ce workflow-ci est délibérément minuscule et sans rapport avec le reste :
+# pas de Python, pas d'identifiants PayByPhone, aucune dépendance. Il ne pose
+# qu'une question — « à quand remonte le dernier passage réussi ? » — et ouvre
+# une issue si la réponse est « trop loin ». Moins il change, mieux il protège.
+name: Veille
+
+on:
+  schedule:
+    # Quatre fois par jour, dont une le matin : un relais du soir manqué est
+    # ainsi signalé avant le retour du stationnement payant à 9 h.
+    - cron: "20 5,11,17,22 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  issues: write
+
+jobs:
+  silence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Le seuil doit rester largement au-dessus de l'écart normal entre
+            // deux passages (2 h), sinon un simple retard de GitHub alerterait
+            // pour rien — et une alerte qui crie trop souvent ne se lit plus.
+            const SEUIL_HEURES = 8;
+            const commun = { owner: context.repo.owner, repo: context.repo.repo };
+            const TITRE = "🚨 Stationnement — plus aucun passage n'aboutit";
+
+            let dernier = null;
+            try {
+              const runs = await github.rest.actions.listWorkflowRuns({
+                ...commun, workflow_id: "parking.yml", status: "success", per_page: 1,
+              });
+              dernier = runs.data.workflow_runs[0] || null;
+            } catch (erreur) {
+              core.warning(`Impossible de lire les passages : ${erreur.message}`);
+            }
+
+            const heures = dernier
+              ? (Date.now() - new Date(dernier.created_at).getTime()) / 3600000
+              : Infinity;
+
+            // Une seule alerte à la fois, et le label est celui que le passage
+            // suivant referme tout seul : la veille n'a pas à se surveiller.
+            const ouvertes = await github.rest.issues.listForRepo({
+              ...commun, state: "open", labels: "stationnement",
+            });
+
+            if (heures <= SEUIL_HEURES) {
+              core.info(`Dernier passage réussi il y a ${heures.toFixed(1)} h — rien à signaler.`);
+              return;
+            }
+            if (ouvertes.data.length > 0) {
+              core.info(`Alerte déjà ouverte : #${ouvertes.data[0].number}`);
+              return;
+            }
+
+            const depuis = dernier
+              ? `il y a **${heures.toFixed(0)} h** (${dernier.created_at})`
+              : "**jamais** — aucun passage réussi n'a été trouvé";
+            await github.rest.issues.create({
+              ...commun, title: TITRE, labels: ["stationnement"],
+              body: [
+                `Le dernier passage réussi remonte à ${depuis}.`,
+                "",
+                "**Ce n'est pas un échec de renouvellement : c'est un silence.**",
+                "Aucun passage n'est exécuté du tout, donc aucune alerte ordinaire",
+                "ne peut se déclencher — elles vivent toutes dans le workflow qui",
+                "ne tourne plus.",
+                "",
+                "Trois causes possibles, dans l'ordre de fréquence :",
+                "",
+                "1. **Le fichier du workflow est refusé par GitHub** — une clé en",
+                "   double suffit. Ouvrir l'onglet Actions : le workflow n'y",
+                "   apparaît plus, ou n'a plus de passage récent.",
+                "2. **GitHub n'honore plus les créneaux programmés** — vérifier",
+                "   https://www.githubstatus.com",
+                "3. **Actions est désactivé sur le dépôt** — Settings → Actions.",
+                "",
+                "En attendant, prendre les tickets à la main dans PayByPhone : le",
+                "stationnement redevient payant à 9 h.",
+                "",
+                "Cette issue se refermera toute seule au prochain passage réussi.",
+              ].join("\n"),
+            });
+            core.setFailed(`Aucun passage réussi depuis ${heures.toFixed(0)} h.`);
