@@ -334,3 +334,17 @@ def test_le_ticket_a_la_demande_ne_peut_pas_couter():
 
     # `park` sans `--max-cost` plafonne à 0 € : aucun achat payant possible.
     assert "--max-cost" not in etape["run"]
+
+
+def test_toute_etape_qui_lit_le_compte_recoit_aussi_la_plaque():
+    """La plaque vient d'un secret : une étape qui a les identifiants mais pas
+    la plaque ne peut même pas lire la config, et fait échouer le passage.
+    C'est arrivé sur trois étapes le 07/08."""
+    for fichier in (".github/workflows/parking.yml", ".github/workflows/decouverte.yml"):
+        workflow = yaml.safe_load((ROOT / fichier).read_text())
+        for job in workflow["jobs"].values():
+            for etape in job["steps"]:
+                env = etape.get("env") or {}
+                if "PBP_USERNAME" not in env:
+                    continue
+                assert "PBP_PLATE" in env, f"{fichier} : « {etape.get('name')} »"
