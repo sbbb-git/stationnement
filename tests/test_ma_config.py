@@ -416,7 +416,7 @@ def test_le_seuil_de_la_veille_laisse_passer_les_retards_ordinaires():
     """Trop bas, elle crie pour un simple retard de GitHub et on cesse de la
     lire. Trop haut, elle prévient après le retour du payant à 9 h."""
     script = _veille()["jobs"]["silence"]["steps"][0]["with"]["script"]
-    seuil = int(script.split("SEUIL_HEURES = ")[1].split(";")[0])
+    seuil = int(script.split("SEUIL_HEURES = ")[1].split(": ")[1].split(";")[0])
 
     ecart_normal = 2  # la veille horaire de `parking.yml` passe toutes les 2 h
     assert ecart_normal * 2 < seuil <= 12
@@ -435,3 +435,10 @@ def test_la_veille_se_reveille_avant_le_retour_du_payant():
                 )
     assert any("05:00" <= h <= "08:59" for h in heures), sorted(heures)
     assert "workflow_dispatch" in declencheurs
+
+
+def test_lepreuve_de_la_veille_ne_part_pas_toute_seule():
+    """Une alarme jamais déclenchée ne prouve rien — mais elle ne doit se
+    déclencher que sur demande écrite, jamais sur un passage ordinaire."""
+    script = _veille()["jobs"]["silence"]["steps"][0]["with"]["script"]
+    assert 'message.includes("[test-veille]") ? 0 : 8' in script

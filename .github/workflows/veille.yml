@@ -17,6 +17,12 @@ on:
     # Quatre fois par jour, dont une le matin : un relais du soir manqué est
     # ainsi signalé avant le retour du stationnement payant à 9 h.
     - cron: "20 5,11,17,22 * * *"
+  # Toute modification de ce fichier le fait tourner aussitôt : c'est le seul
+  # moyen d'éprouver un garde-fou sans attendre une vraie panne.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/veille.yml"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +40,11 @@ jobs:
             // Le seuil doit rester largement au-dessus de l'écart normal entre
             // deux passages (2 h), sinon un simple retard de GitHub alerterait
             // pour rien — et une alerte qui crie trop souvent ne se lit plus.
-            const SEUIL_HEURES = 8;
+            // Écrire [test-veille] dans un message de commit ramène le seuil
+            // à zéro : l'alerte se lève alors sur commande, sans avoir à
+            // attendre une vraie panne. Elle se referme au passage suivant.
+            const message = context.payload.head_commit?.message || "";
+            const SEUIL_HEURES = message.includes("[test-veille]") ? 0 : 8;
             const commun = { owner: context.repo.owner, repo: context.repo.repo };
             const TITRE = "🚨 Stationnement — plus aucun passage n'aboutit";
 
