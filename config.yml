@@ -8,6 +8,9 @@
 # Secteurs : 75001–75011 d'un côté, 75012–75020 de l'autre.
 # Chaque ticket court jusqu'à 20h00 le lendemain : le relais se fait donc à
 # 20h05, et rien n'est pris avant 20h00 (`window`).
+#
+# Deux garde-fous veillent : `parking.yml` alerte quand un renouvellement
+# échoue, `veille.yml` quand plus aucun passage n'a lieu du tout.
 
 timezone: Europe/Paris
 country: FR
