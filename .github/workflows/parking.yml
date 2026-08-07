@@ -15,7 +15,9 @@ on:
     # 17h-20h UTC couvre 19h-22h Paris l'été et 18h-21h l'hiver.
     - cron: "5,15,25,35,45,55 17-20 * * *"
   # Chaque correction poussée sur main déclenche un passage réel : c'est ce qui
-  # permet de vérifier une modification sans attendre le prochain créneau.
+  # permet de vérifier une modification sans attendre le prochain créneau —
+  # et le seul recours quand GitHub cesse d'honorer les créneaux programmés,
+  # comme le 07/08 où aucun n'a été exécuté de la journée.
   # Sans risque de dépense : `max_cost_per_ticket: 0` n'autorise que le gratuit.
   push:
     branches: [main]
