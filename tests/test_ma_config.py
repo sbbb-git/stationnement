@@ -348,3 +348,30 @@ def test_toute_etape_qui_lit_le_compte_recoit_aussi_la_plaque():
                 if "PBP_USERNAME" not in env:
                     continue
                 assert "PBP_PLATE" in env, f"{fichier} : « {etape.get('name')} »"
+
+
+class _SansDoublon(yaml.SafeLoader):
+    """Un chargeur YAML qui refuse une clé répétée, comme le fait GitHub.
+
+    PyYAML garde silencieusement la dernière : c'est pourquoi les tests
+    passaient alors que GitHub, lui, rejetait le fichier.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        vues = set()
+        for cle_node, _ in node.value:
+            cle = self.construct_object(cle_node, deep=deep)
+            if cle in vues:
+                raise AssertionError(f"clé « {cle} » en double, ligne {cle_node.start_mark.line + 1}")
+            vues.add(cle)
+        return super().construct_mapping(node, deep)
+
+
+def test_aucune_cle_dupliquee_dans_les_workflows():
+    """Une clé en double rend le fichier invalide pour GitHub, qui cesse alors
+    de créer le moindre passage — sans rien signaler, nulle part. C'est ce qui
+    a coûté la journée du 07/08 : `PBP_PLATE` écrit deux fois dans la même
+    étape, et plus aucun ticket pendant vingt heures.
+    """
+    for fichier in sorted(ROOT.glob(".github/workflows/*.yml")):
+        yaml.load(fichier.read_text(encoding="utf-8"), _SansDoublon)

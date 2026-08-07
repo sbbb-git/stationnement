@@ -93,7 +93,6 @@ jobs:
           # Le dépôt est public : la plaque peut vivre dans un secret plutôt
           # que dans `config.yml` (`plate: ${PBP_PLATE}`). Sans le secret, la
           # valeur écrite dans la config continue de servir.
-          PBP_PLATE:    ${{ secrets.PBP_PLATE }}
           NTFY_TOPIC:   ${{ secrets.NTFY_TOPIC }}
 
       # L'état, en tête du passage : c'est l'interface consultable depuis un
@@ -105,7 +104,6 @@ jobs:
         env:
           PBP_USERNAME: ${{ secrets.PBP_USERNAME }}
           PBP_PASSWORD: ${{ secrets.PBP_PASSWORD }}
-          PBP_PLATE:    ${{ secrets.PBP_PLATE }}
           PBP_PLATE:    ${{ secrets.PBP_PLATE }}
 
       # Le tableau de bord : une issue unique, dont le corps est réécrit à
