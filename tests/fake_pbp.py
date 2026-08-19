@@ -20,32 +20,34 @@ from urllib.parse import parse_qs, urlparse
 MEMBER_ID = "d6d1817e-98ee-4600-b82b-f1aace2abea5"
 PLATE = "AB123CD"
 
-CMI_POLICY = "1085252721"
+# Le vrai identifiant relevé sur le compte : le faux serveur doit répondre
+# à la configuration livrée, sans quoi elle n'est jamais éprouvée.
+CMI_POLICY = "1321271030"
 
 PROGRESSIVE = {60: 6.0, 120: 12.0, 180: 32.5, 240: 52.5, 300: 63.75, 360: 75.0}
 
-RATE_OPTIONS = {
-    "75016": [
-        {"name": "Carte Mobilité Inclusion", "type": "CMI", "ratePolicyId": CMI_POLICY,
-         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Hours", "Days"],
-         "effectiveMaxStayDuration": {"quantity": 24, "timeUnit": "Hours"}},
-        {"name": "Visiteur", "type": "VIS", "ratePolicyId": "75016",
-         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
-         "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
-    ],
-    # Pas de CMI ici : c'est la zone qui sert à éprouver le repli.
-    "75008": [
-        {"name": "Visiteur", "type": "VIS", "ratePolicyId": "75008",
-         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
-         "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}},
-    ],
-    "75017": [
-        {"name": "Carte Mobilité Inclusion", "type": "CMI", "ratePolicyId": CMI_POLICY,
-         "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Hours", "Days"],
-         "effectiveMaxStayDuration": {"quantity": 24, "timeUnit": "Hours"}},
-    ],
-}
+def _handi(zone: str) -> dict:
+    # Le vrai compte annonce `type: CUSTOM` ; on garde « CMI » ici parce que
+    # c'est ce que les configurations d'exemple désignent par leur type.
+    # Le nom et l'identifiant, eux, sont ceux du vrai tarif.
+    return {"name": "Handi - toutes zones", "type": "CMI", "ratePolicyId": CMI_POLICY,
+            "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Hours", "Days"],
+            "effectiveMaxStayDuration": {"quantity": 24, "timeUnit": "Hours"}}
 
+
+def _visiteur(zone: str) -> dict:
+    return {"name": "Visiteur", "type": "VIS", "ratePolicyId": zone,
+            "maxStayStatus": "ParkingAllowed", "acceptedTimeUnits": ["Minutes", "Hours"],
+            "effectiveMaxStayDuration": {"quantity": 360, "timeUnit": "Minutes"}}
+
+
+# Les vingt arrondissements, comme le balayage du 31/07 l'a établi : le tarif
+# Handi existe partout. Le 75008 fait exception ici — c'est la zone qui sert à
+# éprouver le repli, et elle doit donc refuser.
+RATE_OPTIONS = {
+    f"750{n:02d}": ([] if n == 8 else [_handi(f"750{n:02d}")]) + [_visiteur(f"750{n:02d}")]
+    for n in range(1, 21)
+}
 UNIT_MINUTES = {"minutes": 1, "hours": 60, "days": 1440}
 
 # Formes d'entrée du serveur. Tout champ hors de cette liste est rejeté, comme

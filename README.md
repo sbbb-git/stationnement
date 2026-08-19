@@ -281,7 +281,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-123 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+134 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.
@@ -296,7 +296,27 @@ Sont verrouillés en plus :
   navigateur : une config cassée n'est jamais écrite, et son verdict est
   exactement celui du moteur ;
 - **les fichiers livrés** — zones et ordre des replis, horaire, cron, alerte :
-  testés sur `config.yml` et le workflow, pas sur des exemples.
+  testés sur `config.yml` et le workflow, pas sur des exemples ;
+- **les workflows, exécutés** — voir ci-dessous.
+
+### Le workflow n'est pas du texte : il est exécuté
+
+Trois pannes d'août 2026 viennent toutes du même angle mort. Mes tests
+*lisaient* le YAML — l'ordre des étapes, la présence d'un secret, la valeur
+d'un `if` — sans jamais lancer une seule des commandes qu'il contient. Un
+workflow était donc du code que rien n'exécutait :
+
+| Quand | Défaut | Coût |
+|---|---|---|
+| 06/08 | `Historique récent` sans `PBP_PLATE` | passage en échec après coup |
+| 07/08 | une clé YAML en double | fichier refusé, silence total |
+| 07→19/08 | `Attendre le relais` sans `PBP_PLATE` | **douze jours sans ticket** |
+
+Chaque commande de chaque workflow est maintenant **rejouée par les tests, avec
+pour seul environnement celui que son étape déclare** — exactement ce que
+fournit le coureur de GitHub, ni plus. Un `env:` oublié fait désormais échouer
+les tests au lieu de la voiture. Vérifié en remettant le défaut du 07/08 en
+place : le test tombe, en nommant l'étape fautive.
 
 ---
 

@@ -5,7 +5,7 @@ import pytest
 from allovalet.errors import ApiError, AuthError, NotEligibleError
 from allovalet.models import utcnow
 from allovalet.paybyphone import Duration, PayByPhoneClient, best_duration
-from tests.fake_pbp import PLATE
+from tests.fake_pbp import CMI_POLICY, PLATE
 
 
 def test_connexion_et_compte(client, server):
@@ -37,14 +37,14 @@ def test_tarifs_et_selection(client):
     assert {o.type for o in options} == {"CMI", "VIS"}
 
     cmi = client.pick_rate_option("75016", PLATE, "CMI")
-    assert cmi.id == "1085252721"
+    assert cmi.id == CMI_POLICY
     assert cmi.max_stay_minutes == 24 * 60
 
     par_defaut = client.pick_rate_option("75016", PLATE, None)
     assert par_defaut.type == "CMI"  # sans `rate:`, le premier tarif de la zone
 
-    par_nom = client.pick_rate_option("75016", PLATE, "mobilité")
-    assert par_nom.type == "CMI"
+    par_nom = client.pick_rate_option("75016", PLATE, "handi")   # un bout du nom suffit
+    assert par_nom.id == CMI_POLICY
 
 
 def test_tarif_inexistant(client):
@@ -59,7 +59,7 @@ def test_zone_inconnue(client):
 
 
 def test_devis(client):
-    gratuit = client.quote("75016", PLATE, Duration(24, "Hours"), rate_option_id="1085252721")
+    gratuit = client.quote("75016", PLATE, Duration(24, "Hours"), rate_option_id=CMI_POLICY)
     assert gratuit.cost == 0.0
     assert gratuit.minutes == 24 * 60
 
@@ -70,7 +70,7 @@ def test_devis(client):
 def test_achat_cree_un_ticket_verifie(client, server):
     session = client.start_session(
         location_id="75016", plate=PLATE, duration=Duration(24, "Hours"),
-        rate_option_id="1085252721",
+        rate_option_id=CMI_POLICY,
     )
     assert session.id
     assert session.plate == PLATE
