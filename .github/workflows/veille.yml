@@ -61,6 +61,9 @@ jobs:
             const heures = dernier
               ? (Date.now() - new Date(dernier.created_at).getTime()) / 3600000
               : Infinity;
+            const dernier_reussi = dernier
+              ? `${dernier.created_at} (il y a ${heures.toFixed(0)} h)`
+              : "aucun";
 
             // Une seule alerte à la fois, et le label est celui que le passage
             // suivant referme tout seul : la veille n'a pas à se surveiller.
@@ -72,8 +75,35 @@ jobs:
               core.info(`Dernier passage réussi il y a ${heures.toFixed(1)} h — rien à signaler.`);
               return;
             }
+            // Une alerte qui ne sonne qu'une fois ne sert à rien : le mail
+            // d'ouverture peut passer inaperçu, et rien ne le rappelle ensuite.
+            // C'est exactement ce qui s'est produit du 07 au 19/08 — l'alerte
+            // était ouverte depuis douze jours, muette. On relance donc un
+            // rappel par jour tant que la panne dure : chaque commentaire
+            // déclenche un nouveau mail.
             if (ouvertes.data.length > 0) {
-              core.info(`Alerte déjà ouverte : #${ouvertes.data[0].number}`);
+              const alerte = ouvertes.data[0];
+              const commentaires = await github.rest.issues.listComments({
+                ...commun, issue_number: alerte.number, per_page: 100,
+              });
+              const dernier = commentaires.data[commentaires.data.length - 1];
+              const depuisRappel = dernier
+                ? (Date.now() - new Date(dernier.created_at).getTime()) / 3600000
+                : Infinity;
+              if (depuisRappel < 20) {
+                core.info(`Alerte #${alerte.number} ouverte, rappel récent — on se tait.`);
+                return;
+              }
+              const jours = ((Date.now() - new Date(alerte.created_at).getTime())
+                             / 86400000).toFixed(0);
+              await github.rest.issues.createComment({
+                ...commun, issue_number: alerte.number,
+                body: `🔁 **Toujours en panne — ${jours} jour(s) que ça dure.** `
+                    + `Dernier passage réussi : ${dernier_reussi}. `
+                    + `La voiture n'est probablement pas couverte : prendre les `
+                    + `tickets à la main en attendant.`,
+              });
+              core.setFailed(`Panne depuis ${jours} jour(s) — rappel envoyé.`);
               return;
             }
 

@@ -101,8 +101,17 @@ def cmd_wait(args) -> int:
     """
     from .schedule import secondes_avant
 
-    cfg = Config.load(args.config)
-    maintenant = datetime.now(ZoneInfo(cfg.timezone))
+    # Cette commande ne fait que dormir. Elle précède la prise de tickets :
+    # rien de ce qu'elle lit ne doit pouvoir empêcher l'achat. Une config
+    # illisible la fait donc rendre la main, pas échouer — c'est ce qui a
+    # manqué douze jours durant, à partir du 07/08/2026.
+    try:
+        fuseau = ZoneInfo(Config.load(args.config).timezone)
+    except Exception as exc:  # noqa: BLE001 — un réveil ne bloque jamais un achat
+        log.warning("Config illisible (%s) — attente ignorée, on enchaîne.", exc)
+        return 0
+
+    maintenant = datetime.now(fuseau)
     delai = secondes_avant(args.at, maintenant, args.max_minutes)
     if not delai:
         print(f"{maintenant:%H:%M} — pas d'attente (relais de {args.at}).")

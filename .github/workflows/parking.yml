@@ -81,6 +81,8 @@ jobs:
       # passage fait son travail normalement.
       - name: Attendre le relais de 20h05
         if: github.event_name == 'schedule'
+        env:
+          PBP_PLATE: ${{ secrets.PBP_PLATE }}
         run: python -m allovalet wait --at 20:05 --max-minutes 30
 
       - name: Vérifier la couverture
