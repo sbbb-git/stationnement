@@ -151,6 +151,11 @@ class Runner:
         reason = self._why_act(rule, active, now_local)
         if not reason:
             return self._couvert(rule, active, now_local)
+        if reason == f"rendez-vous de {rule.renew_at}" and not self.dry_run:
+            # Le rendez-vous se consomme ici, au moment d'agir — pas en le
+            # calculant : le tableau de bord et `status` le calculent aussi, et
+            # c'était jusqu'ici l'affichage qui décidait à la place de l'achat.
+            self._marquer_rendez_vous(rule, now_local)
         return self._take_ticket(rule, reason)
 
     def _couvert(self, rule: Rule, active: ParkingSession, now_local: datetime) -> RuleResult:
@@ -190,20 +195,31 @@ class Runner:
         if not rule.renew_at or not active.expiry:
             return None
 
-        hour, minute = (int(x) for x in rule.renew_at.split(":"))
-        anchor = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        anchor, key = self._rendez_vous(rule, now_local)
         if now_local < anchor:
             return None  # le rendez-vous du jour n'est pas encore arrivé
-        if active.expiry.astimezone(self.tz) >= anchor + timedelta(days=1):
-            return None  # le ticket tient déjà jusqu'au prochain rendez-vous
+        # « Tient jusqu'au prochain rendez-vous », à la marge près : un ticket
+        # PayByPhone finit à 20h00, le rendez-vous est à 20h01. Sans la marge,
+        # cette minute d'écart déclenchait chaque soir une reprise inutile, et le
+        # tableau de bord annonçait une action qui n'avait pas lieu d'être.
+        if active.expiry.astimezone(self.tz) >= anchor + timedelta(days=1) - margin:
+            return None
 
-        # Une seule reprise par rendez-vous, sinon on recommencerait à chaque passage.
-        key = f"{rule.name}@{anchor.isoformat()}"
-        if self.dry_run:  # une simulation ne doit pas consommer le rendez-vous
-            return None if self.state.done(key) else f"rendez-vous de {rule.renew_at}"
-        if not self.state.once(key):
+        # Une seule reprise par rendez-vous. Lecture seule : cette méthode ne
+        # fait que répondre à la question — c'est `_apply` qui consomme.
+        if self.state.done(key):
             return None
         return f"rendez-vous de {rule.renew_at}"
+
+    def _marquer_rendez_vous(self, rule: Rule, now_local: datetime) -> None:
+        """Consomme le rendez-vous du jour : il n'aura plus lieu avant demain."""
+        self.state.once(self._rendez_vous(rule, now_local)[1])
+
+    def _rendez_vous(self, rule: Rule, now_local: datetime) -> tuple[datetime, str]:
+        """L'heure du rendez-vous du jour, et la clé qui le rend unique."""
+        hour, minute = (int(x) for x in rule.renew_at.split(":"))
+        anchor = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return anchor, f"{rule.name}@{anchor.isoformat()}"
 
     # ----------------------------------------------------------------- achat
 

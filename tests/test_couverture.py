@@ -87,12 +87,43 @@ def test_le_rendez_vous_ne_se_declenche_quune_fois(tmp_path, client, state, serv
     presque = ticket(soir + timedelta(hours=23))
 
     assert why(runner, soir, presque) == "rendez-vous de 20:01"
+    runner._marquer_rendez_vous(runner.cfg.rules[0], soir)  # ce que fait l'achat
     assert why(runner, soir + timedelta(minutes=30), presque) is None  # passage suivant
     assert why(runner, soir + timedelta(hours=2), presque) is None
 
     # …mais le lendemain, le rendez-vous a de nouveau lieu
     demain = soir + timedelta(days=1)
     assert why(runner, demain, ticket(demain + timedelta(hours=23))) == "rendez-vous de 20:01"
+
+
+def test_calculer_la_decision_ne_la_consomme_pas(tmp_path, client, state, server):
+    """Le tableau de bord et `status` posent la même question que l'achat.
+
+    Jusqu'au 24/09, la poser suffisait à consommer le rendez-vous : c'était
+    donc l'affichage qui décidait, à la place de l'achat, qu'il n'aurait pas
+    lieu. Une lecture ne doit jamais rien changer."""
+    runner = build(tmp_path, client, state)
+    soir = datetime(2026, 3, 12, 20, 1, tzinfo=PARIS)
+    presque = ticket(soir + timedelta(hours=23))
+
+    assert why(runner, soir, presque) == "rendez-vous de 20:01"
+    assert why(runner, soir, presque) == "rendez-vous de 20:01"   # toujours à faire
+    assert state.data.get("once", {}) == {}                       # rien d'écrit
+
+
+def test_un_ticket_qui_finit_a_20h_tient_jusquau_rendez_vous_de_20h01(
+    tmp_path, client, state, server
+):
+    """Le vrai comportement de PayByPhone : un ticket pris à 20h16 finit le
+    lendemain à 20h00, une minute avant le rendez-vous. Ce n'est pas un trou —
+    la reprise de 20h00 s'en charge. Sans tolérance, le rendez-vous se
+    déclenchait chaque soir pour rien."""
+    runner = build(tmp_path, client, state)
+    soir = datetime(2026, 9, 23, 20, 16, tzinfo=PARIS)
+    pris_ce_soir = ticket(datetime(2026, 9, 24, 20, 0, tzinfo=PARIS))
+
+    assert why(runner, soir, pris_ce_soir) is None
+    assert why(runner, soir + timedelta(hours=2), pris_ce_soir) is None
 
 
 def test_pas_de_rendez_vous_avant_lheure(tmp_path, client, state, server):

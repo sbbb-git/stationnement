@@ -116,22 +116,27 @@ Le rendez-vous n'a lieu qu'une fois par soir. Quand une session en cours est
 renouvelable — l'API le dit elle-même avec `isRenewable` — on la renouvelle au
 lieu d'en empiler une seconde.
 
-### L'heure est tenue par le programme, pas par GitHub
+### Ce que GitHub honore vraiment
 
-Relevé sur quatre jours : **GitHub n'a honoré que 16 des 56 passages
-programmés** chaque jour, avec des trous de trois heures. En demander plus n'y
-change rien. Ce qui marche, c'est qu'un passage **attende** :
+Le planificateur de GitHub ne garantit rien, et le relevé le montre :
 
-- neuf créneaux entre 19h30 et 20h05 ; le premier honoré **dort jusqu'à 20h05**
-  puis agit — il suffit donc d'un seul ;
-- passé 20h05, plus aucune attente : le ticket a expiré, chaque minute compte.
-  Douze créneaux entre 20h et 21h servent alors de filet ;
-- une veille toutes les deux heures le reste du temps, pour le tableau de bord
-  et pour rattraper un trou nocturne.
+| Période | Passages demandés / jour | Honorés / jour |
+|---|---|---|
+| août 2026 | 56, puis 36 | ~16, puis ~20 |
+| septembre 2026 | 36 | **~7** |
 
-Été comme hiver : les créneaux couvrent 17h-20h UTC, ce qui encadre 20h00 de
-Paris dans les deux décalages. Environ 1 000 minutes d'Actions par mois, sur
-les 2 000 gratuites d'un dépôt privé.
+Conséquences, telles qu'observées du 11 au 23/09 :
+
+- **le relais a eu lieu tous les soirs** — 200 passages réussis sur 200 —
+  mais **entre 20h15 et 22h56**, selon le premier créneau que GitHub daigne
+  honorer après 20h00 ;
+- le mécanisme d'attente (un passage arrivé entre 19h35 et 20h05 dort jusqu'à
+  20h05) ne s'est déclenché **aucun soir** : aucun créneau de cette fenêtre
+  n'a été honoré. Il reste en place, sans coût, pour les soirs où il le sera.
+
+Le stationnement parisien devient gratuit à 20h00 : ce retard ne coûte pas
+d'amende. Mais **20h05 pile n'est pas tenu**, et seul un déclencheur extérieur
+à GitHub peut le tenir — voir « Ce qui reste à décider » plus bas.
 
 ---
 
@@ -182,13 +187,32 @@ l'historique — il ne se passe simplement plus rien. C'est arrivé le 07/08/202
 (une clé YAML en double, fichier refusé par GitHub) et ça a coûté une journée
 entière sans ticket.
 
-D'où un second workflow, `veille.yml`, qui ne surveille qu'une chose : **le
-silence**. Quatre fois par jour il demande « à quand remonte le dernier passage
-réussi ? » et ouvre une issue si la réponse dépasse 8 h. Il est délibérément
-minuscule et ne partage rien avec ce qu'il surveille — pas de Python, pas
-d'identifiants, aucune dépendance : tout point commun serait un angle mort. Son
-réveil du matin signale un relais du soir manqué **avant** le retour du payant
-à 9 h.
+D'où un second workflow, `veille.yml`, délibérément minuscule et sans rien de
+commun avec ce qu'il surveille — pas de Python, pas d'identifiants, pas même de
+`checkout` : tout point commun serait un angle mort. Il fait deux choses.
+
+**Il vérifie que le relais du soir a eu lieu.** Sa première version demandait
+« le dernier passage réussi date-t-il de plus de 8 h ? » — et s'est trompée
+**sept fois** entre le 27/08 et le 23/09, parce que GitHub espace parfois ses
+passages de 9 à 14 h alors que la voiture était couverte. Une alarme qui crie
+pour rien ne se lit plus, et c'est alors la vraie qu'on ignore. Il pose donc
+désormais la question qui compte : *y a-t-il eu un passage réussi depuis 20h00
+hier soir ?* — mais seulement quatre heures après, le temps que GitHub en
+honore un. Son alerte se rappelle chaque jour tant que ça dure, et c'est lui qui
+la referme, au premier relais réussi : un passage de l'après-midi, qui n'achète
+rien, ne prouve pas que la voiture est couverte.
+
+**Il empêche GitHub de tout éteindre.** Règle de GitHub, citée telle quelle :
+*« In a public repository, scheduled workflows are automatically disabled when
+no repository activity has occurred in 60 days. »* Un dépôt qui marche n'a
+justement plus besoin de commits : sans intervention, tout se serait arrêté le
+**18/10/2026** — sans erreur, sans alerte, veille comprise. Quand le dernier
+commit a plus de 25 jours, la veille met donc à jour un seul fichier,
+`.github/signe-de-vie`.
+
+Ses deux scripts sont **exécutés** par les tests, dans Node, contre un faux
+GitHub et une horloge réglable — dont les situations réellement observées,
+comme le faux positif du 23/09 à 12h04.
 
 ---
 
@@ -281,7 +305,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-134 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+151 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.
@@ -317,6 +341,16 @@ pour seul environnement celui que son étape déclare** — exactement ce que
 fournit le coureur de GitHub, ni plus. Un `env:` oublié fait désormais échouer
 les tests au lieu de la voiture. Vérifié en remettant le défaut du 07/08 en
 place : le test tombe, en nommant l'étape fautive.
+
+---
+
+## Ce qui reste à décider
+
+**Tenir 20h05 pile.** GitHub honore environ un créneau sur cinq : le relais
+tombe entre 20h15 et 22h56. Pour 20h05 à la minute, il faut un déclencheur
+extérieur à GitHub — un service de cron gratuit qui appelle chaque soir
+l'API `workflow_dispatch` avec un jeton limité à ce dépôt. Rien à coder de
+plus côté projet ; un compte et un jeton à créer.
 
 ---
 

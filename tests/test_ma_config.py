@@ -6,6 +6,7 @@ des exemples : si quelqu'un touche à une zone, à l'horaire ou au cron, ça cas
 ici.
 """
 
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -387,67 +388,42 @@ def test_aucune_cle_dupliquee_dans_les_workflows():
 
 
 # ------------------------------------------------- le garde-fou de dernier recours
+#
+# Le comportement de la veille est éprouvé dans tests/test_veille.py, où ses
+# scripts sont réellement exécutés. Ne reste ici que ce qui tient au calendrier.
 
 
 def _veille() -> dict:
     return yaml.load((ROOT / ".github/workflows/veille.yml").read_text(), _SansDoublon)
 
 
-def test_la_veille_ne_depend_de_rien():
-    """Elle surveille `parking.yml` ; elle doit donc survivre à sa panne.
-
-    Pas de Python, pas d'identifiants PayByPhone, aucune dépendance installée :
-    tout ce qu'elle partage avec le workflow surveillé est une cause de panne
-    commune, donc un angle mort.
-    """
-    job = _veille()["jobs"]["silence"]
-    texte = (ROOT / ".github/workflows/veille.yml").read_text(encoding="utf-8")
-
-    assert len(job["steps"]) == 1
-    for secret in ("PBP_USERNAME", "PBP_PASSWORD", "PBP_PLATE"):
-        assert secret not in texte, secret
-    assert "requirements.txt" not in texte and "allovalet" not in texte
-
-
-def test_la_veille_peut_ouvrir_une_alerte_et_la_laisser_se_refermer():
-    workflow = _veille()
-    assert workflow["permissions"]["issues"] == "write"
-    assert workflow["permissions"]["actions"] == "read"
-
-    script = workflow["jobs"]["silence"]["steps"][0]["with"]["script"]
-    # Même label que l'alerte ordinaire : le passage suivant la referme seul.
-    assert 'labels: ["stationnement"]' in script
-    # Une seule à la fois, sinon elle s'accumulerait à chaque réveil.
-    assert "state: \"open\", labels: \"stationnement\"" in script
-
-
-def test_le_seuil_de_la_veille_laisse_passer_les_retards_ordinaires():
-    """Trop bas, elle crie pour un simple retard de GitHub et on cesse de la
-    lire. Trop haut, elle prévient après le retour du payant à 9 h."""
-    script = _veille()["jobs"]["silence"]["steps"][0]["with"]["script"]
-    seuil = int(script.split("SEUIL_HEURES = ")[1].split(": ")[1].split(";")[0])
-
-    ecart_normal = 2  # la veille horaire de `parking.yml` passe toutes les 2 h
-    assert ecart_normal * 2 < seuil <= 12
-
-
-def test_la_veille_se_reveille_avant_le_retour_du_payant():
-    """Un relais du soir manqué doit être signalé avant 9 h du matin."""
+def test_la_veille_se_reveille_plusieurs_fois_la_nuit():
+    """Un relais manqué se juge après minuit : il faut des réveils entre
+    minuit et 9 h, et plusieurs, puisque GitHub en saute les trois quarts."""
     declencheurs = _veille()[True]
-    heures = set()
-    for entree in declencheurs["schedule"]:
-        minutes, heure_champ = entree["cron"].split()[:2]
-        for h in _expand(heure_champ, 23):
-            for m in _expand(minutes, 59):
-                heures.add(
-                    datetime(2025, 7, 15, h, m, tzinfo=UTC).astimezone(PARIS).strftime("%H:%M")
-                )
-    assert any("05:00" <= h <= "08:59" for h in heures), sorted(heures)
+    for mois in (7, 1):
+        heures = set()
+        for entree in declencheurs["schedule"]:
+            minutes, heure_champ = entree["cron"].split()[:2]
+            for h in _expand(heure_champ, 23):
+                for m in _expand(minutes, 59):
+                    heures.add(datetime(2025, mois, 15, h, m, tzinfo=UTC)
+                               .astimezone(PARIS).strftime("%H:%M"))
+        nuit = [h for h in heures if "00:00" <= h <= "08:59"]
+        assert len(nuit) >= 3, f"mois {mois} : {sorted(nuit)}"
     assert "workflow_dispatch" in declencheurs
 
 
-def test_lepreuve_de_la_veille_ne_part_pas_toute_seule():
-    """Une alarme jamais déclenchée ne prouve rien — mais elle ne doit se
-    déclencher que sur demande écrite, jamais sur un passage ordinaire."""
-    script = _veille()["jobs"]["silence"]["steps"][0]["with"]["script"]
-    assert 'message.includes("[test-veille]") ? 0 : 8' in script
+def test_aucune_action_ne_tourne_encore_sur_node_20():
+    """GitHub a retiré Node 20 de ses machines le 23/09/2026. Les actions qui le
+    déclaraient tournaient depuis en mode forcé sur Node 24 — un sursis, pas
+    une garantie. Premières versions Node 24 : checkout v5, setup-python v6,
+    cache v5, github-script v8."""
+    minimum = {"actions/checkout": 5, "actions/setup-python": 6,
+               "actions/cache": 5, "actions/github-script": 8}
+    for fichier in sorted(ROOT.glob(".github/workflows/*.yml")):
+        for action, version in re.findall(r"uses:\s*([\w-]+/[\w-]+)@v(\d+)",
+                                          fichier.read_text(encoding="utf-8")):
+            if action in minimum:
+                assert int(version) >= minimum[action], \
+                    f"{fichier.name} : {action}@v{version} tourne encore sur Node 20"
