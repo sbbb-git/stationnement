@@ -53,6 +53,9 @@ def lancer(job: str, tmp_path, maintenant: datetime, **scenario) -> list[dict]:
     for cle in ("derniere_reussite", "dernier_commit"):
         if isinstance(scenario.get(cle), datetime):
             scenario[cle] = _iso(scenario[cle])
+    for passage in scenario.get("passages", []):
+        if isinstance(passage.get("updated_at"), datetime):
+            passage["updated_at"] = _iso(passage["updated_at"])
     scenario["maintenant"] = int(maintenant.timestamp() * 1000)
 
     script = tmp_path / f"{job}.js"
@@ -81,6 +84,33 @@ def test_pas_de_fausse_alerte_quand_github_espace_ses_passages(tmp_path):
     soir avait bien eu lieu, et la voiture était couverte."""
     actions = lancer("silence", tmp_path, paris("2026-09-23 12:04"),
                      derniere_reussite=paris("2026-09-23 02:01"))
+    assert actions == []
+
+
+def test_la_fausse_alerte_du_24_09_a_13h42(tmp_path):
+    """Ce qu'a vu la veille en production : un passage en cours (celui
+    déclenché par le même commit), puis six réussis depuis le relais de la
+    veille au soir. Avec le filtre `status` de l'API — en retard de 22 h — elle
+    a cru que le dernier datait de 15h23 la veille, et crié."""
+    passages = [
+        {"conclusion": None, "updated_at": paris("2026-09-24 15:42")},     # en cours
+        {"conclusion": "success", "updated_at": paris("2026-09-24 11:01")},
+        {"conclusion": "success", "updated_at": paris("2026-09-24 00:56")},
+        {"conclusion": "success", "updated_at": paris("2026-09-24 00:42")},
+        {"conclusion": "success", "updated_at": paris("2026-09-23 22:09")},
+        {"conclusion": "success", "updated_at": paris("2026-09-23 20:16")},  # le relais
+        {"conclusion": "success", "updated_at": paris("2026-09-23 15:23")},
+    ]
+    actions = lancer("silence", tmp_path, paris("2026-09-24 15:42"), passages=passages)
+    assert actions == []
+
+
+def test_un_echec_recent_ne_masque_pas_le_dernier_succes(tmp_path):
+    passages = [
+        {"conclusion": "failure", "updated_at": paris("2026-09-25 01:00")},
+        {"conclusion": "success", "updated_at": paris("2026-09-24 20:10")},
+    ]
+    actions = lancer("silence", tmp_path, paris("2026-09-25 03:00"), passages=passages)
     assert actions == []
 
 

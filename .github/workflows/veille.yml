@@ -59,13 +59,23 @@ jobs:
 
             // Le dernier passage réussi, daté de sa FIN : un passage lancé à
             // 19h58 qui a attendu 20h05 pour agir est bien un relais du soir.
+            //
+            // Surtout pas le filtre `status: "success"` de l'API : il répond avec
+            // des heures de retard. Le 24/09 à 13h42, il donnait pour dernier
+            // passage réussi celui de la veille à 15h23 — six plus récents
+            // existaient — et a levé une fausse alerte. Il explique aussi une
+            // partie des sept fausses alertes d'août-septembre. La liste non
+            // filtrée, elle, est à jour : on y cherche soi-même.
             let fin = 0;
             try {
               const runs = await github.rest.actions.listWorkflowRuns({
-                ...commun, workflow_id: "parking.yml", status: "success", per_page: 1,
+                ...commun, workflow_id: "parking.yml", per_page: 50,
               });
-              const dernier = runs.data.workflow_runs[0];
-              if (dernier) fin = new Date(dernier.updated_at).getTime();
+              for (const run of runs.data.workflow_runs) {
+                if (run.conclusion === "success") {
+                  fin = Math.max(fin, new Date(run.updated_at).getTime());
+                }
+              }
             } catch (erreur) {
               core.warning(`Impossible de lire les passages : ${erreur.message}`);
             }

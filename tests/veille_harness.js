@@ -21,13 +21,20 @@ const introuvable = () => Object.assign(new Error("Not Found"), { status: 404 })
 const github = {
   rest: {
     actions: {
-      listWorkflowRuns: async () => ({
-        data: {
-          workflow_runs: sc.derniere_reussite
-            ? [{ created_at: sc.derniere_reussite, updated_at: sc.derniere_reussite }]
-            : [],
-        },
-      }),
+      // Comme la vraie API : la liste non filtrée est à jour ; le filtre
+      // `status` répond avec des heures de retard (constaté le 24/09/2026 :
+      // 22 h). On le reproduit, pour qu'un script qui s'y fierait échoue ici.
+      listWorkflowRuns: async ({ status }) => {
+        let runs = sc.passages || (sc.derniere_reussite
+          ? [{ conclusion: "success", updated_at: sc.derniere_reussite }]
+          : []);
+        if (status) {
+          const retard = sc.maintenant - 22 * 3600000;
+          runs = runs.filter(r => r.conclusion === status
+                               && new Date(r.updated_at).getTime() < retard);
+        }
+        return { data: { workflow_runs: runs } };
+      },
     },
     issues: {
       listForRepo: async ({ labels }) => ({

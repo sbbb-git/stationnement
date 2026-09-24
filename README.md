@@ -214,6 +214,12 @@ Ses deux scripts sont **exécutés** par les tests, dans Node, contre un faux
 GitHub et une horloge réglable — dont les situations réellement observées,
 comme le faux positif du 23/09 à 12h04.
 
+Ce faux GitHub reproduit aussi un défaut du vrai, découvert en production le
+24/09 : **le filtre `status: "success"` de l'API répond avec des heures de
+retard** (22 h ce jour-là). La veille lit donc la liste non filtrée et y cherche
+elle-même le dernier passage réussi — un script qui se fierait au filtre échoue
+aux tests.
+
 ---
 
 ## L'interface
@@ -305,7 +311,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-151 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+156 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.
