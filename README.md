@@ -131,12 +131,36 @@ Conséquences, telles qu'observées du 11 au 23/09 :
   mais **entre 20h15 et 22h56**, selon le premier créneau que GitHub daigne
   honorer après 20h00 ;
 - le mécanisme d'attente (un passage arrivé entre 19h35 et 20h05 dort jusqu'à
-  20h05) ne s'est déclenché **aucun soir** : aucun créneau de cette fenêtre
-  n'a été honoré. Il reste en place, sans coût, pour les soirs où il le sera.
+  20h05) ne s'est déclenché **que 7 soirs sur 46** : trop peu de créneaux de
+  cette demi-heure sont honorés.
 
-Le stationnement parisien devient gratuit à 20h00 : ce retard ne coûte pas
-d'amende. Mais **20h05 pile n'est pas tenu**, et seul un déclencheur extérieur
-à GitHub peut le tenir — voir « Ce qui reste à décider » plus bas.
+**Depuis le 28/10, l'attente remonte jusqu'à 14h15** (350 min) : le dernier
+passage honoré de l'après-midi dort jusqu'à 20h05 et agit à ce moment-là —
+jamais avant 20h. Rejoué sur les 46 soirs du 12/09 au 27/10, ce réglage aurait
+tenu **20h05 pile 43 soirs sur 46** (93 %) ; les autres soirs, le relais se
+fait comme avant au premier créneau honoré après 20h.
+
+| Attente maximale avant 20h05 | Soirs relayés à 20h05 pile |
+|---|---|
+| 30 min (avant le 28/10) | 7 / 46 |
+| 2 h | 24 / 46 |
+| 4 h | 39 / 46 |
+| **5 h 50 (actuel)** | **43 / 46** |
+
+Deux garde-fous :
+
+- **dépôt public seulement.** Les minutes d'Actions y sont illimitées. Un dépôt
+  privé n'en a que 2 000 par mois, que six heures d'attente par soir
+  épuiseraient en dix jours : l'étape lit la visibilité du dépôt et s'en tient
+  alors à 30 min (de même si la lecture échoue) ;
+- **un passage qui attend ne bloque rien.** Le suivant le remplace
+  (`cancel-in-progress`) et attend à sa place ; une modification poussée
+  n'attend jamais. Effet visible : l'après-midi, le tableau de bord reste figé
+  jusqu'au relais.
+
+Le stationnement parisien devient gratuit à 20h00 : un relais tardif ne coûte
+pas d'amende. Seul un déclencheur extérieur à GitHub tiendrait 20h05 les 7 %
+de soirs restants — voir « Ce qui reste à décider » plus bas.
 
 ---
 
@@ -311,7 +335,7 @@ Une règle peut aussi porter `window` (jours et heures d'activité) et `stall`.
 pip install -r requirements-dev.txt && python -m pytest tests -q
 ```
 
-156 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
+160 tests, sans réseau. Un faux serveur GraphQL rejoue le moteur réel :
 connexion, jeton périmé, tarifs, devis, achat via `quoteId`, renouvellement,
 vérification, achat fantôme, introspection et élagage des champs inconnus —
 le faux serveur rejette tout champ hors schéma, comme le vrai.
@@ -352,8 +376,9 @@ place : le test tombe, en nommant l'étape fautive.
 
 ## Ce qui reste à décider
 
-**Tenir 20h05 pile.** GitHub honore environ un créneau sur cinq : le relais
-tombe entre 20h15 et 22h56. Pour 20h05 à la minute, il faut un déclencheur
+**Tenir 20h05 pile tous les soirs.** L'attente longue le tient environ neuf
+soirs sur dix ; les autres, le relais tombe au premier créneau honoré après
+20h. Pour 20h05 à la minute chaque soir, il faut un déclencheur
 extérieur à GitHub — un service de cron gratuit qui appelle chaque soir
 l'API `workflow_dispatch` avec un jeton limité à ce dépôt. Rien à coder de
 plus côté projet ; un compte et un jeton à créer.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -169,4 +170,6 @@ def secondes_avant(cible: str, maintenant: datetime, plafond_minutes: int) -> in
     reste = (rendez_vous - maintenant).total_seconds()
     if reste <= 0 or reste > plafond_minutes * 60:
         return 0
-    return int(reste)
+    # Arrondi au-dessus : se réveiller à 20:04:59 ferait agir une seconde
+    # avant le rendez-vous.
+    return math.ceil(reste)

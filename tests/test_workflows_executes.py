@@ -69,6 +69,7 @@ def _commandes(etape: dict, sortie: str) -> list[list[str]]:
             argv = argv.split(coupure)[0]
         argv = argv.replace('"$GITHUB_STEP_SUMMARY"', sortie).replace("etat.md", sortie)
         argv = argv.replace('"$ZONE"', ENTREES["zone"])
+        argv = argv.replace('"$plafond"', str(etape.get("env", {}).get("ATTENTE_MAX_PRIVE", "")))
         appels.append([m for m in shlex.split(argv) if m])
     return appels
 

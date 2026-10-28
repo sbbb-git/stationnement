@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -82,6 +82,13 @@ def _soir(heure: int, minute: int):
 def test_un_passage_en_avance_attend_lheure_pile():
     assert secondes_avant("20:05", _soir(19, 40), 35) == 25 * 60
     assert secondes_avant("20:05", _soir(20, 4), 35) == 60
+
+
+def test_le_reveil_ne_tombe_jamais_avant_lheure():
+    """Une fraction de seconde tronquée faisait agir à 20:04:59."""
+    presque = _soir(19, 40).replace(second=30, microsecond=500_000)
+    attente = secondes_avant("20:05", presque, 35)
+    assert presque + timedelta(seconds=attente) >= _soir(20, 5)
 
 
 def test_un_passage_deja_en_retard_nattend_pas():

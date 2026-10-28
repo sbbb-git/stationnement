@@ -49,10 +49,11 @@ permissions:
 jobs:
   tickets:
     runs-on: ubuntu-latest
-    # 30 min d'attente possible avant le relais, plus le passage lui-même.
-    # Court exprès : un passage qui attend occupe le poste, et les autres
-    # attendent derrière.
-    timeout-minutes: 40
+    # Jusqu'à 350 min d'attente avant le relais (dépôt public), plus le
+    # passage lui-même : sous les 6 h qu'accorde GitHub à un poste hébergé.
+    # Un passage qui attend ne bloque personne : le suivant le remplace
+    # (`cancel-in-progress`) et attend à sa place.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v5
 
@@ -76,14 +77,27 @@ jobs:
       # Le vrai remède au planificateur de GitHub : un passage déclenché en
       # avance attend l'heure exacte au lieu d'agir trop tôt (le ticket court
       # encore) ou de laisser le suivant arriver trop tard. Il suffit donc
-      # qu'**un seul** des passages de 19h35-20h05 soit honoré pour que le
-      # relais tombe à 20h05 pile. Au-delà du plafond, aucune attente : le
-      # passage fait son travail normalement.
+      # qu'**un seul** passage soit honoré entre 14h15 et 20h05 pour que le
+      # relais tombe à 20h05 pile — et jamais avant. Au-delà du plafond,
+      # aucune attente : le passage fait son travail normalement.
+      #
+      # L'attente longue n'est permise qu'à un dépôt public, où les minutes
+      # d'Actions sont illimitées. Un dépôt privé en a 2 000 par mois : six
+      # heures par soir les épuiseraient en dix jours, et tout s'arrêterait.
+      # Il garde donc 30 min. Visibilité illisible ⇒ 30 min aussi.
       - name: Attendre le relais de 20h05
         if: github.event_name == 'schedule'
         env:
           PBP_PLATE: ${{ secrets.PBP_PLATE }}
-        run: python -m allovalet wait --at 20:05 --max-minutes 30
+          GH_TOKEN: ${{ github.token }}
+          ATTENTE_MAX_PUBLIC: "350"
+          ATTENTE_MAX_PRIVE: "30"
+        run: |
+          plafond=$ATTENTE_MAX_PRIVE
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private 2>/dev/null)" = "false" ]; then
+            plafond=$ATTENTE_MAX_PUBLIC
+          fi
+          python -m allovalet wait --at 20:05 --max-minutes "$plafond"
 
       - name: Vérifier la couverture
         id: passage

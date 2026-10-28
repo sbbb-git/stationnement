@@ -7,6 +7,7 @@ ici.
 """
 
 import re
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -253,12 +254,17 @@ def test_un_passage_qui_attend_cede_la_place_au_suivant():
     assert workflow["concurrency"]["cancel-in-progress"] is True
 
 
-def _plafond_dattente() -> int:
+def _etape_dattente() -> dict:
     workflow = yaml.safe_load((ROOT / ".github/workflows/parking.yml").read_text())
     for etape in workflow["jobs"]["tickets"]["steps"]:
         if "--max-minutes" in (etape.get("run") or ""):
-            return int(etape["run"].split("--max-minutes")[1].split()[0])
+            return etape
     raise AssertionError("aucune étape d'attente")
+
+
+def _plafond_dattente(visibilite: str = "PUBLIC") -> int:
+    """Le plafond réellement appliqué : celui du dépôt public, le nôtre."""
+    return int(_etape_dattente()["env"][f"ATTENTE_MAX_{visibilite}"])
 
 
 def test_letape_dattente_vise_bien_le_relais():
@@ -276,8 +282,15 @@ def test_letape_dattente_vise_bien_le_relais():
     assert ordre.index(attente["name"]) < ordre.index("Vérifier la couverture")
 
     # Le passage doit pouvoir attendre sans être tué par le délai maximum.
-    plafond = int(attente["run"].split("--max-minutes")[1].split()[0])
+    plafond = max(_plafond_dattente("PUBLIC"), _plafond_dattente("PRIVE"))
     assert job["timeout-minutes"] > plafond + 5
+    # Six heures, c'est la limite d'un poste hébergé : au-delà, GitHub tue le
+    # passage quoi qu'on écrive.
+    assert job["timeout-minutes"] <= 360
+
+    # Un dépôt privé n'a que 2 000 min par mois : l'attente y reste courte,
+    # sinon les minutes s'épuisent en quelques jours et tout s'arrête.
+    assert _plafond_dattente("PRIVE") * 31 <= 1000
 
     # Le rendez-vous quotidien doit déjà être passé quand l'attente se termine,
     # sinon on se réveillerait pile trop tôt pour qu'il se déclenche.
@@ -427,3 +440,32 @@ def test_aucune_action_ne_tourne_encore_sur_node_20():
             if action in minimum:
                 assert int(version) >= minimum[action], \
                     f"{fichier.name} : {action}@v{version} tourne encore sur Node 20"
+
+
+@pytest.mark.parametrize(
+    "reponse_gh,plafond_attendu",
+    [
+        ("echo false", "PUBLIC"),   # dépôt public : minutes illimitées
+        ("echo true", "PRIVE"),     # dépôt privé : 2 000 min par mois
+        ("exit 1", "PRIVE"),        # API muette : on reste prudent
+    ],
+)
+def test_lattente_longue_est_reservee_au_depot_public(
+    tmp_path, reponse_gh, plafond_attendu
+):
+    """Le script de l'étape est exécuté pour de vrai, avec un faux `gh` et un
+    faux `python` qui note le plafond qu'on lui passe."""
+    etape = _etape_dattente()
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "gh").write_text(f"#!/bin/sh\n{reponse_gh}\n")
+    (bin_ / "python").write_text(f'#!/bin/sh\necho "$@" > {tmp_path}/appel\n')
+    for outil in bin_.iterdir():
+        outil.chmod(0o755)
+
+    env = {k: str(v) for k, v in etape["env"].items()}
+    env |= {"PATH": f"{bin_}:/usr/bin:/bin", "GITHUB_REPOSITORY": "proprio/depot"}
+    subprocess.run(["bash", "-e", "-c", etape["run"]], env=env, check=True)
+
+    appel = (tmp_path / "appel").read_text().split()
+    assert appel[appel.index("--max-minutes") + 1] == str(_plafond_dattente(plafond_attendu))

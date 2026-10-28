@@ -106,8 +106,9 @@ def markdown(vue: dict, depot: str | None = None) -> str:
         "## 🅿️ Stationnement",
         "",
         f"*Relevé le {vue['genere'][8:10]}/{vue['genere'][5:7]} à "
-        f"{vue['genere'][11:16]}.* Un tableau qui date de plus de deux heures "
-        "veut dire qu'aucun passage n'aboutit.",
+        f"{vue['genere'][11:16]}.* L'après-midi, le tableau peut rester figé "
+        "jusqu'à 20h05 (le passage attend le relais) ; après 21h, un relevé "
+        "antérieur à 20h veut dire que le relais n'a pas eu lieu.",
         "",
     ]
     if vue["erreur"]:
